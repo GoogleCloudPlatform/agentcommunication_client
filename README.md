@@ -1,1 +1,1 @@
-## Client library for Aggent Communication API.
+## Client library for Agent Communication API.
