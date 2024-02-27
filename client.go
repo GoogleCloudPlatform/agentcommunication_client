@@ -29,11 +29,12 @@ import (
 	cm "cloud.google.com/go/compute/metadata"
 	"google.golang.org/api/option"
 	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
-	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	acpb "github.com/GoogleCloudPlatform/agentcommunication_client/gapic/agentcommunicationpb"
 )
 
@@ -46,6 +47,11 @@ var (
 	DebugLogging = false
 	// ErrConnectionClosed is an error indicating that the connection was closed by the caller.
 	ErrConnectionClosed = errors.New("connection closed")
+	// ErrMessageTimeout is an error indicating message send timed out.
+	ErrMessageTimeout = errors.New("timed out waiting for response")
+	// ErrResourceExhausted is an error indicating that the server responded to the send with
+	// ResourceExhausted.
+	ErrResourceExhausted = errors.New("resource exhausted")
 
 	logger *log.Logger
 )
@@ -62,7 +68,7 @@ type Connection struct {
 	channelID   string
 
 	messages     chan *acpb.MessageBody
-	responseSubs map[string]chan struct{}
+	responseSubs map[string]chan *status.Status
 	responseMx   sync.Mutex
 
 	regional bool
@@ -81,6 +87,8 @@ func (c *Connection) Close() {
 
 func (c *Connection) close(err error) {
 	loggerPrintf("closing connection with err: %v", err)
+	st, _ := status.FromError(err)
+	loggerPrintf("closing connection with status: %+v", st)
 	select {
 	case <-c.closed:
 		return
@@ -91,13 +99,22 @@ func (c *Connection) close(err error) {
 	}
 }
 
-func (c *Connection) waitForResponse(key string, channel chan struct{}) error {
-	timer := time.NewTimer(5 * time.Second)
+func (c *Connection) waitForResponse(key string, channel chan *status.Status) error {
+	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	select {
-	case <-channel:
+	case st := <-channel:
+		if st != nil {
+			switch st.Code() {
+			case codes.OK:
+			case codes.ResourceExhausted:
+				return fmt.Errorf("%w: %s", ErrResourceExhausted, st.Message())
+			default:
+				return fmt.Errorf("unexpected status: %+v", st)
+			}
+		}
 	case <-timer.C:
-		return fmt.Errorf("timed out waiting for response, MessageID: %q", key)
+		return fmt.Errorf("%w: timed out waiting for response, MessageID: %q", ErrMessageTimeout, key)
 	case <-c.closed:
 		return fmt.Errorf("connection closed with err: %w", c.closeErr)
 	}
@@ -107,7 +124,7 @@ func (c *Connection) waitForResponse(key string, channel chan struct{}) error {
 	return nil
 }
 
-func (c *Connection) sendWithResp(req *acpb.StreamAgentMessagesRequest, channel chan struct{}) error {
+func (c *Connection) sendWithResp(req *acpb.StreamAgentMessagesRequest, channel chan *status.Status) error {
 	loggerPrintf("Sending message %+v", req)
 
 	select {
@@ -119,14 +136,34 @@ func (c *Connection) sendWithResp(req *acpb.StreamAgentMessagesRequest, channel 
 	return c.waitForResponse(req.GetMessageId(), channel)
 }
 
-// SendMessage sends a message to the client.
+// SendMessage sends a message to the client. Will automatically retry on message timeout (temporary
+// disconnects) and in the case of ResourceExhausted with a backoff. Because retries are limited
+// the returned error can in some cases be one of ErrMessageTimeout or ErrResourceExhausted, in
+// which case send should be retried by the caller.
 func (c *Connection) SendMessage(msg *acpb.MessageBody) error {
+	var err error
+	// Retry 4 times.
+	for i := 1; i <= 5; i++ {
+		err := c.sendMessage(msg)
+		if errors.Is(err, ErrResourceExhausted) {
+			// Start with 250ms sleep, then simply multiply by iteration.
+			time.Sleep(time.Duration(i*250) * time.Millisecond)
+			continue
+		} else if errors.Is(err, ErrMessageTimeout) {
+			continue
+		}
+		return err
+	}
+	return err
+}
+
+func (c *Connection) sendMessage(msg *acpb.MessageBody) error {
 	req := &acpb.StreamAgentMessagesRequest{
 		MessageId: uuid.New().String(),
 		Type:      &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg},
 	}
 
-	channel := make(chan struct{})
+	channel := make(chan *status.Status)
 	c.responseMx.Lock()
 	c.responseSubs[req.GetMessageId()] = channel
 	c.responseMx.Unlock()
@@ -178,8 +215,11 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 				return
 			default:
 			}
-			// TODO: Handle other error codes like RESOURCE_EXHAUSTED
-			if err != io.EOF && !errors.Is(err, io.EOF) {
+			st, ok := status.FromError(err)
+			if ok && st.Code() == codes.ResourceExhausted {
+				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", err)
+				time.Sleep(1000 * time.Millisecond)
+			} else if err != io.EOF && !errors.Is(err, io.EOF) {
 				loggerPrintf("Unexpected error, closing connection: %v", err)
 				c.close(err)
 				return
@@ -199,13 +239,14 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 				return
 			}
 		case *acpb.StreamAgentMessagesResponse_MessageResponse:
+			st := resp.GetMessageResponse().GetStatus()
 			c.responseMx.Lock()
 			for key, sub := range c.responseSubs {
 				if key != resp.GetMessageId() {
 					continue
 				}
 				select {
-				case sub <- struct{}{}:
+				case sub <- status.FromProto(st):
 				default:
 				}
 			}
@@ -217,7 +258,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 func (c *Connection) acknowledgeMessage(messageID string) error {
 	ackReq := &acpb.StreamAgentMessagesRequest{
 		MessageId: messageID,
-		Type:      &acpb.StreamAgentMessagesRequest_MessageResponse{MessageResponse: &acpb.MessageResponse{Status: &statuspb.Status{}}},
+		Type:      &acpb.StreamAgentMessagesRequest_MessageResponse{},
 	}
 	select {
 	case <-c.closed:
@@ -257,7 +298,7 @@ func (c *Connection) createStream(ctx context.Context) error {
 		Type: &acpb.StreamAgentMessagesRequest_RegisterConnection{
 			RegisterConnection: &acpb.RegisterConnection{ResourceId: c.resourceID, ChannelId: c.channelID}}}
 
-	channel := make(chan struct{})
+	channel := make(chan *status.Status)
 	c.responseMx.Lock()
 	c.responseSubs[req.GetMessageId()] = channel
 	c.responseMx.Unlock()
@@ -285,7 +326,7 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 		channelID:    channelID,
 		closed:       make(chan struct{}),
 		messages:     make(chan *acpb.MessageBody, 5),
-		responseSubs: make(map[string]chan struct{}),
+		responseSubs: make(map[string]chan *status.Status),
 		streamReady:  make(chan struct{}),
 		sends:        make(chan *acpb.StreamAgentMessagesRequest),
 	}
