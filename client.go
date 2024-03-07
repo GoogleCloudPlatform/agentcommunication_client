@@ -206,6 +206,7 @@ func (c *Connection) send(streamClosed chan struct{}) {
 // recv keeps receiving and acknowledging new messages.
 func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 	loggerPrintf("Receiving messages")
+	var unavailableRetries int
 	for {
 		resp, err := c.stream.Recv()
 		if err != nil {
@@ -218,7 +219,17 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 			st, ok := status.FromError(err)
 			if ok && st.Code() == codes.ResourceExhausted {
 				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", err)
-				time.Sleep(1000 * time.Millisecond)
+			} else if ok && st.Code() == codes.Unavailable {
+				// Retry max 5 times (2s total).
+				if unavailableRetries > 5 {
+					loggerPrintf("Stream returned Unavailable, exceeded max number of reconnects, closing connection: %v", err)
+					c.close(err)
+					return
+				}
+				loggerPrintf("Stream returned Unavailable, will reconnect: %v", err)
+				// Sleep for 200ms * num of unavailableRetries, first retry is immediate.
+				time.Sleep(time.Duration(unavailableRetries*200) * time.Millisecond)
+				unavailableRetries++
 			} else if err != io.EOF && !errors.Is(err, io.EOF) {
 				loggerPrintf("Unexpected error, closing connection: %v", err)
 				c.close(err)
@@ -231,6 +242,8 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 			}
 			return
 		}
+		// Reset unavailable retries.
+		unavailableRetries = 0
 		switch resp.GetType().(type) {
 		case *acpb.StreamAgentMessagesResponse_MessageBody:
 			c.messages <- resp.GetMessageBody()
