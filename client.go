@@ -230,7 +230,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 				// Sleep for 200ms * num of unavailableRetries, first retry is immediate.
 				time.Sleep(time.Duration(unavailableRetries*200) * time.Millisecond)
 				unavailableRetries++
-			} else if err != io.EOF && !errors.Is(err, io.EOF) {
+			} else if err != io.EOF && !errors.Is(err, io.EOF) && (ok && st.Code() != codes.Canceled) {
 				loggerPrintf("Unexpected error, closing connection: %v", err)
 				c.close(err)
 				return
