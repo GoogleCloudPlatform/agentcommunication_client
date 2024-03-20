@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
@@ -219,6 +220,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 			st, ok := status.FromError(err)
 			if ok && st.Code() == codes.ResourceExhausted {
 				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", err)
+				time.Sleep(1000 * time.Millisecond)
 			} else if ok && st.Code() == codes.Unavailable {
 				// Retry max 5 times (2s total).
 				if unavailableRetries > 5 {
@@ -230,7 +232,9 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 				// Sleep for 200ms * num of unavailableRetries, first retry is immediate.
 				time.Sleep(time.Duration(unavailableRetries*200) * time.Millisecond)
 				unavailableRetries++
-			} else if err != io.EOF && !errors.Is(err, io.EOF) && (ok && st.Code() != codes.Canceled) {
+			} else if err != io.EOF && !errors.Is(err, io.EOF) && (ok && st.Code() != codes.Canceled) && (ok && st.Code() != codes.DeadlineExceeded) {
+				// EOF is a normal stream close, Canceled will be set by the server when stream timeout is
+				// reached, DeadlineExceeded would be because of the client side deadline we set.
 				loggerPrintf("Unexpected error, closing connection: %v", err)
 				c.close(err)
 				return
@@ -288,7 +292,7 @@ func (c *Connection) createStream(ctx context.Context) error {
 		return fmt.Errorf("error getting instance token: %v", err)
 	}
 
-	newCtx := metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
+	ctx = metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
 		"authentication":                  "Bearer " + token,
 		"agent-communication-resource-id": c.resourceID,
 		"agent-communication-channel-id":  c.channelID,
@@ -297,13 +301,16 @@ func (c *Connection) createStream(ctx context.Context) error {
 	loggerPrintf("Using ResourceID %q", c.resourceID)
 	loggerPrintf("Using ChannelID %q", c.channelID)
 
-	c.stream, err = c.client.StreamAgentMessages(newCtx)
+	// Set a timeout for the stream, this is well above service side timeout.
+	cnclCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
+	c.stream, err = c.client.StreamAgentMessages(cnclCtx)
 	if err != nil {
+		cancel()
 		return fmt.Errorf("error creating stream: %v", err)
 	}
 
 	streamClosed := make(chan struct{})
-	go c.recv(newCtx, streamClosed)
+	go c.recv(ctx, streamClosed)
 	go c.send(streamClosed)
 
 	req := &acpb.StreamAgentMessagesRequest{
@@ -316,10 +323,12 @@ func (c *Connection) createStream(ctx context.Context) error {
 	c.responseSubs[req.GetMessageId()] = channel
 	c.responseMx.Unlock()
 	if err := c.sendWithResp(req, channel); err != nil {
+		cancel()
 		return err
 	}
 
 	go func() {
+		defer cancel()
 		for {
 			select {
 			case <-c.streamReady:
@@ -366,6 +375,7 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 	defaultOpts := []option.ClientOption{
 		option.WithoutAuthentication(), // Do not use oauth.
 		option.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(nil))), // Because we disabled Auth we need to specifically enable TLS.
+		option.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 60 * time.Second, Timeout: 10 * time.Second})),
 		option.WithEndpoint(fmt.Sprintf("%s-agentcommunication.googleapis.com:443", location)),
 	}
 
