@@ -80,6 +80,7 @@ type testSrv struct {
 	sync.Mutex
 
 	req     []*acpb.StreamAgentMessagesRequest
+	reqMx   sync.Mutex
 	headers metadata.MD
 	send    chan *acpb.StreamAgentMessagesResponse
 	recvErr chan error
@@ -116,7 +117,9 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 				s.recvErr <- err
 				return
 			}
+			s.reqMx.Lock()
 			s.req = append(s.req, rec)
+			s.reqMx.Unlock()
 
 			switch rec.GetType().(type) {
 			case *acpb.StreamAgentMessagesRequest_MessageResponse:
@@ -209,6 +212,64 @@ func TestSendMessage(t *testing.T) {
 		t.Fatalf("srv.req = %v, want 2", len(srv.req))
 	}
 
+	wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg}}
+	if diff := cmp.Diff(srv.req[1], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
+		t.Errorf("srv.req[1] diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestSendMessage_ClosedConnection(t *testing.T) {
+	srv, conn, err := createTestConnection(context.Background())
+	if err != nil {
+		t.Fatalf("CreateConnection() failed: %v", err)
+	}
+	conn.timeToWaitForResp = 100 * time.Millisecond
+
+	// Lock the recv loop.
+	srv.send <- &acpb.StreamAgentMessagesResponse{Type: &acpb.StreamAgentMessagesResponse_MessageBody{}}
+	time.Sleep(5 * time.Millisecond)
+	// Close the connection server side, client should not autoreconnect because it is blocked on recv.
+	srv.recvErr <- nil
+
+	// Should wait for reconnect.
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+	var sendErr = make(chan error)
+	go func() {
+		sendErr <- conn.SendMessage(msg)
+	}()
+	// Give goroutine enough time to start
+	time.Sleep(5 * time.Millisecond)
+
+	// Should only have 2 messages, register and the ack.
+	srv.reqMx.Lock()
+	if len(srv.req) != 2 {
+		t.Fatalf("srv.req = %v, want 2", len(srv.req))
+	}
+	srv.req = nil
+	srv.reqMx.Unlock()
+
+	// Unblock recv
+	if _, err := conn.Receive(); err != nil {
+		t.Fatalf("Receive() failed: %v", err)
+	}
+
+	// Wait for resend.
+	timer := time.NewTimer(500 * time.Millisecond)
+	select {
+	case err := <-sendErr:
+		if err != nil {
+			t.Fatalf("SendMessage() failed: %v", err)
+		}
+	case <-timer.C:
+		t.Errorf("SendMessage() timed out")
+	}
+
+	// Should have 2 more messages now, register and the send.
+	srv.reqMx.Lock()
+	defer srv.reqMx.Unlock()
+	if len(srv.req) != 2 {
+		t.Fatalf("srv.req = %v, want 2", len(srv.req))
+	}
 	wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg}}
 	if diff := cmp.Diff(srv.req[1], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
 		t.Errorf("srv.req[1] diff (-want +got):\n%s", diff)

@@ -72,7 +72,8 @@ type Connection struct {
 	responseSubs map[string]chan *status.Status
 	responseMx   sync.Mutex
 
-	regional bool
+	regional          bool
+	timeToWaitForResp time.Duration
 }
 
 func loggerPrintf(format string, v ...any) {
@@ -101,7 +102,7 @@ func (c *Connection) close(err error) {
 }
 
 func (c *Connection) waitForResponse(key string, channel chan *status.Status) error {
-	timer := time.NewTimer(3 * time.Second)
+	timer := time.NewTimer(c.timeToWaitForResp)
 	defer timer.Stop()
 	select {
 	case st := <-channel:
@@ -178,7 +179,10 @@ func (c *Connection) sendMessage(msg *acpb.MessageBody) error {
 	return c.sendWithResp(req, channel)
 }
 
-// Receive messages.
+// Receive messages, Receive should be called continuously for the life of the stream connection,
+// any delay (>500ms) in Receive when there are queued messages will cause the server to disconnect the
+// stream. This means handling the MessageBody from Receive should not be blocking, offload message
+// handling to another goroutine and immediately call Receive again.
 func (c *Connection) Receive() (*acpb.MessageBody, error) {
 	select {
 	case msg := <-c.messages:
@@ -188,12 +192,36 @@ func (c *Connection) Receive() (*acpb.MessageBody, error) {
 	}
 }
 
+func (c *Connection) streamSend(req *acpb.StreamAgentMessagesRequest, streamClosed chan struct{}) error {
+	if err := c.stream.Send(req); err != nil {
+		if err != io.EOF && !errors.Is(err, io.EOF) {
+			// Something is very broken, just close the stream here.
+			loggerPrintf("Unexpected send error, closing connection: %v", err)
+			c.close(err)
+			return err
+		}
+		// EOF error means the stream is closed, this should be picked up by recv, but that could be
+		// blocked, close our sends for now and just allow the caller handle it, SendMessage will wait
+		// for response which will never come and auto retry. acknowledgeMessage will fail and prevent
+		// the message from being passed on to message handlers, allowing recv to handle the stream
+		// close error.
+		loggerPrintf("Error sending message, stream closed.")
+		select {
+		case <-streamClosed:
+		default:
+			close(streamClosed)
+		}
+		return ErrConnectionClosed
+	}
+	return nil
+}
+
 func (c *Connection) send(streamClosed chan struct{}) {
 	for {
 		select {
 		case req := <-c.sends:
-			if err := c.stream.Send(req); err != nil {
-				c.close(err)
+			if err := c.streamSend(req, streamClosed); err != nil {
+				return
 			}
 		case <-c.closed:
 			c.stream.CloseSend()
@@ -211,7 +239,11 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 	for {
 		resp, err := c.stream.Recv()
 		if err != nil {
-			close(streamClosed)
+			select {
+			case <-streamClosed:
+			default:
+				close(streamClosed)
+			}
 			select {
 			case <-c.closed:
 				return
@@ -250,11 +282,13 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 		unavailableRetries = 0
 		switch resp.GetType().(type) {
 		case *acpb.StreamAgentMessagesResponse_MessageBody:
-			c.messages <- resp.GetMessageBody()
-			if err := c.acknowledgeMessage(resp.GetMessageId()); err != nil {
-				c.close(err)
-				return
+			// Acknowledge message first, if this ack fails dont forward the message on to the handling
+			// logic since that indicates a stream disconnect.
+			if err := c.acknowledgeMessage(resp.GetMessageId(), streamClosed); err != nil {
+				loggerPrintf("Error acknowledging message %q: %v", resp.GetMessageId(), err)
+				continue
 			}
+			c.messages <- resp.GetMessageBody()
 		case *acpb.StreamAgentMessagesResponse_MessageResponse:
 			st := resp.GetMessageResponse().GetStatus()
 			c.responseMx.Lock()
@@ -272,7 +306,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 	}
 }
 
-func (c *Connection) acknowledgeMessage(messageID string) error {
+func (c *Connection) acknowledgeMessage(messageID string, streamClosed chan struct{}) error {
 	ackReq := &acpb.StreamAgentMessagesRequest{
 		MessageId: messageID,
 		Type:      &acpb.StreamAgentMessagesRequest_MessageResponse{},
@@ -281,7 +315,7 @@ func (c *Connection) acknowledgeMessage(messageID string) error {
 	case <-c.closed:
 		return fmt.Errorf("connection closed with err: %w", c.closeErr)
 	default:
-		return c.stream.Send(ackReq)
+		return c.streamSend(ackReq, streamClosed)
 	}
 }
 
@@ -344,13 +378,14 @@ func (c *Connection) createStream(ctx context.Context) error {
 // CreateConnection creates a new connection.
 func CreateConnection(ctx context.Context, channelID string, regional bool, opts ...option.ClientOption) (*Connection, error) {
 	conn := &Connection{
-		regional:     regional,
-		channelID:    channelID,
-		closed:       make(chan struct{}),
-		messages:     make(chan *acpb.MessageBody, 5),
-		responseSubs: make(map[string]chan *status.Status),
-		streamReady:  make(chan struct{}),
-		sends:        make(chan *acpb.StreamAgentMessagesRequest),
+		regional:          regional,
+		channelID:         channelID,
+		closed:            make(chan struct{}),
+		messages:          make(chan *acpb.MessageBody),
+		responseSubs:      make(map[string]chan *status.Status),
+		streamReady:       make(chan struct{}),
+		sends:             make(chan *acpb.StreamAgentMessagesRequest),
+		timeToWaitForResp: 2 * time.Second,
 	}
 
 	zone, err := cm.Zone()
