@@ -22,10 +22,30 @@ std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
 MakeAck(std::string message_id);
 
+// Creates a request with the given message as MessageBody.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
+MakeRequestWithBody(std::string message);
+
 // Creates a request with the given message id and response status.
 std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
 MakeRequestWithResponse(std::string message_id, google::rpc::Status status);
+
+// Creates an ack response for the message with the given message id.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+MakeAckResponse(std::string message_id);
+
+// Creates a response with the given message id and response status.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+MakeResponseWithResponse(std::string message_id, google::rpc::Status status);
+
+// Creates a response with the given message as MessageBody.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+MakeResponseWithBody(std::string message);
 }  // namespace agent_communication
 
 #endif  // THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_HELPER_H_
