@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <string>
-#include <utility>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.pb.h"
 
@@ -26,6 +25,17 @@ MakeAck(std::string message_id);
 std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
 MakeRequestWithResponse(std::string message_id, google::rpc::Status status);
+
+// Creates an ack response for the message with the given message id.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+MakeAckResponse(std::string message_id);
+
+// Creates a response with the given message id and response status.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+MakeResponseWithResponse(std::string message_id, google::rpc::Status status);
+
 }  // namespace agent_communication
 
 #endif  // THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_HELPER_H_
