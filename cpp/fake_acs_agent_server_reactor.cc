@@ -12,6 +12,8 @@
 #include "third_party/grpc/include/grpcpp/impl/service_type.h"
 #include "third_party/grpc/include/grpcpp/security/server_credentials.h"
 #include "third_party/grpc/include/grpcpp/server_builder.h"
+#include "third_party/grpc/include/grpcpp/server_context.h"
+#include "third_party/grpc/include/grpcpp/support/server_callback.h"
 #include "third_party/grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
@@ -77,6 +79,27 @@ void FakeAcsAgentServerReactor::NextWrite() {
   }
   writing_ = true;
   StartWrite(responses_.front().get());
+}
+
+grpc::ServerBidiReactor<Request, Response>*
+FakeAcsAgentServiceImpl::StreamAgentMessages(
+    grpc::CallbackServerContext* context) {
+  absl::MutexLock lock(&reactor_mtx_);
+  reactor_ = new FakeAcsAgentServerReactor(std::move(read_callback_));
+  return reactor_;
+}
+
+void FakeAcsAgentServiceImpl::AddResponse(std::unique_ptr<Response> response) {
+  absl::MutexLock lock(&reactor_mtx_);
+  if (reactor_ == nullptr) {
+    return;
+  }
+  reactor_->AddResponse(std::move(response));
+}
+
+bool FakeAcsAgentServiceImpl::IsReactorCreated() {
+  absl::MutexLock lock(&reactor_mtx_);
+  return reactor_ != nullptr;
 }
 
 FakeAcsAgentServer::FakeAcsAgentServer(grpc::Service* service) {

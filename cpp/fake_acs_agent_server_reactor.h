@@ -90,26 +90,24 @@ class FakeAcsAgentServiceImpl final
           google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
           read_callback)
       : read_callback_(std::move(read_callback)) {}
+
   grpc::ServerBidiReactor<
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest,
       google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>*
-  StreamAgentMessages(grpc::CallbackServerContext* context) override {
-    reactor_ = new FakeAcsAgentServerReactor(std::move(read_callback_));
-    return reactor_;
-  }
+  StreamAgentMessages(grpc::CallbackServerContext* context)
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_) override;
 
   // Adds a response to the buffer of the server reactor.
   void AddResponse(
       std::unique_ptr<
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
-          response) {
-    reactor_->AddResponse(std::move(response));
-  }
+          response) ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
-  bool IsReactorCreated() { return reactor_ != nullptr; }
+  bool IsReactorCreated() ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
  private:
-  FakeAcsAgentServerReactor* reactor_ = nullptr;
+  absl::Mutex reactor_mtx_;
+  FakeAcsAgentServerReactor* reactor_ ABSL_GUARDED_BY(reactor_mtx_) = nullptr;
   absl::AnyInvocable<void(
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
       read_callback_;
