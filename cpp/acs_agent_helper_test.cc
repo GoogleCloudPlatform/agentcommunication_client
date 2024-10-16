@@ -62,4 +62,15 @@ TEST(AcsAgentHelperTest, MakeResponseWithResponse) {
             status.details(1).value());
 }
 
+TEST(AcsAgentHelperTest, MakeRequestWithRegistration) {
+  std::string message_id = "message_id";
+  std::string channel_id = "channel_id";
+  std::string resource_id = "resource_id";
+  std::unique_ptr<Request> request =
+      MakeRequestWithRegistration(message_id, channel_id, resource_id);
+  EXPECT_EQ(request->message_id(), message_id);
+  EXPECT_EQ(request->register_connection().channel_id(), channel_id);
+  EXPECT_EQ(request->register_connection().resource_id(), resource_id);
+}
+
 }  // namespace agent_communication

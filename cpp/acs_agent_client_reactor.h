@@ -6,7 +6,6 @@
 #include <string>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
-#include "google/cloud/agentcommunication/v1/agent_communication.proto.h"
 #include "third_party/absl/base/thread_annotations.h"
 #include "third_party/absl/functional/any_invocable.h"
 #include "third_party/absl/strings/string_view.h"
@@ -60,8 +59,7 @@ class AcsAgentClientReactor
   // Return: boolean on whether an addition of request is successful. This will
   // be false iff there is a write operation in flight.
   bool AddRequest(
-      std::unique_ptr<
-          google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>&
+      const google::cloud::agentcommunication::v1::StreamAgentMessagesRequest&
           request) ABSL_LOCKS_EXCLUDED(request_mtx_);
 
   // Waits for the RPC termination status.

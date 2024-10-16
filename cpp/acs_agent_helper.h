@@ -26,6 +26,13 @@ std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
 MakeRequestWithResponse(std::string message_id, google::rpc::Status status);
 
+// Creates a Registration request with the given message id, channel id and
+// resource id.
+std::unique_ptr<
+    google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
+MakeRequestWithRegistration(std::string message_id, std::string channel_id,
+                            std::string resource_id);
+
 // Creates an ack response for the message with the given message id.
 std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>

@@ -142,22 +142,22 @@ grpc::Status AcsAgentClientReactor::Await() {
   return status;
 }
 
-bool AcsAgentClientReactor::AddRequest(std::unique_ptr<Request>& request) {
+bool AcsAgentClientReactor::AddRequest(const Request& request) {
   absl::MutexLock lock(&request_mtx_);
   if (msg_request_ == nullptr) {
-    msg_request_ = std::move(request);
+    // Add the new request to the buffer of reactor, as the last msg_request_
+    // was completed.
+    msg_request_ = std::make_unique<Request>(request);
     if (!writing_) {
       NextWrite();
     }
     return true;
   } else {
-    // The last msg_request_ was not completed, so we should return false,
-    // and the passed-in request unique_ptr still holds the ownership of the
-    // object.
+    // Return false as the last msg_request_ was not completed.
     ABSL_VLOG(1) << absl::StrFormat(
         "Failed to add request of id: %s to the buffer of reactor. The last "
         "request of id: %s is not written to the stream yet.",
-        request->message_id(), msg_request_->message_id());
+        msg_request_->message_id(), msg_request_->message_id());
     return false;
   }
 }

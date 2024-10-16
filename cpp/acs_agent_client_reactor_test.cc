@@ -163,16 +163,15 @@ TEST_F(AcsAgentClientReactorTest, TestAddRequest) {
 
   // Create a request.
   std::unique_ptr<Request> request = MakeRequestWithBody("body test");
-  auto request_copy = std::make_unique<Request>(*request);
 
   // Add the request to the reactor.
-  ASSERT_TRUE(reactor_->AddRequest(request));
+  ASSERT_TRUE(reactor_->AddRequest(*request));
   // Verify that the response is sent to the reactor by the server.
   std::future_status status =
       response_future.wait_for(std::chrono::seconds(10));
   ASSERT_EQ(status, std::future_status::ready);
   Response response = response_future.get();
-  EXPECT_EQ(request_copy->message_id(), response.message_id());
+  EXPECT_EQ(request->message_id(), response.message_id());
   EXPECT_EQ(response.message_response().status().code(), 0);
 
   // Verify that the request is sent to the server.
@@ -180,9 +179,9 @@ TEST_F(AcsAgentClientReactorTest, TestAddRequest) {
       request_future_.wait_for(std::chrono::seconds(10));
   ASSERT_EQ(request_status, std::future_status::ready);
   Request request_store = request_future_.get();
-  EXPECT_EQ(request_store.message_id(), request_copy->message_id());
+  EXPECT_EQ(request_store.message_id(), request->message_id());
   EXPECT_EQ(request_store.message_body().body().value(),
-            request_copy->message_body().body().value());
+            request->message_body().body().value());
 }
 
 // Tests the functionality of OnReadDone() of client when server sends a

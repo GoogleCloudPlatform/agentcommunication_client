@@ -29,6 +29,19 @@ std::unique_ptr<Request> MakeRequestWithResponse(std::string message_id,
   return request;
 }
 
+std::unique_ptr<Request> MakeRequestWithRegistration(std::string message_id,
+                                                     std::string channel_id,
+                                                     std::string resource_id) {
+  auto request = std::make_unique<Request>();
+  request->set_message_id(std::move(message_id));
+  google::cloud::agentcommunication::v1::RegisterConnection
+      registration_connection;
+  registration_connection.set_channel_id(std::move(channel_id));
+  registration_connection.set_resource_id(std::move(resource_id));
+  *request->mutable_register_connection() = std::move(registration_connection);
+  return request;
+}
+
 std::unique_ptr<Response> MakeAckResponse(std::string message_id) {
   google::rpc::Status status;
   status.set_code(0);
