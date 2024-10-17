@@ -5,6 +5,8 @@
 #include <string>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.pb.h"
+#include "third_party/absl/status/statusor.h"
+#include "third_party/absl/strings/string_view.h"
 
 namespace agent_communication {
 
@@ -20,6 +22,24 @@ struct AgentConnectionId {
 std::unique_ptr<
     google::cloud::agentcommunication::v1::StreamAgentMessagesRequest>
 MakeAck(std::string message_id);
+
+// Queries the response of a http get request through libcurl.
+absl::StatusOr<std::string> CurlHttpGet(const std::string& url,
+                                        const std::string& header);
+
+// Calls CurlHttpGet to query the metadata service.
+// Input: key: the key of the metadata to query.
+// Returns: the value for the given key from the metadata service.
+absl::StatusOr<std::string> GetMetadata(absl::string_view key);
+
+// Generates the agent connection id for the given channel id.
+// This function queries the metadata service to get the ACS token for a
+// specific VM and instance UUID (project/zone/instance number) from the
+// metadata service, and then construct the AgentConnectionId.
+// Input: channel_id: the channel id of the agent. regional: whether to use
+// regional ACS endpoint.
+absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
+    std::string channel_id, bool regional);
 
 // Creates a request with the given message id and response status.
 std::unique_ptr<
