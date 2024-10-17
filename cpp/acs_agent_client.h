@@ -3,6 +3,7 @@
 
 #include <future>
 #include <memory>
+#include <queue>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -94,6 +95,10 @@ class AcsAgentClient {
   // will be executed in the read_response_thread_.
   void ClientReadMessage() ABSL_LOCKS_EXCLUDED(response_read_mtx_);
 
+  // Checks if the ClientReadMessage() should be woken up.
+  bool ShouldWakeUpClientReadMessage()
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(response_read_mtx_);
+
   // Callback invoked in OnReadDone of reactor to process the Response.
   // Wakes up the read_response_thread_ and passes the received Response to be
   // handled by the ClientReadMessage(). In this way, the reactor's OnReadDone
@@ -112,8 +117,7 @@ class AcsAgentClient {
   // associated with the message id is received.
   void AckOnSuccessfulDelivery(
       const google::cloud::agentcommunication::v1::StreamAgentMessagesResponse&
-          response) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(response_read_mtx_);
+          response) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
 
   // Shuts down the client by cancelling the RPC and joining the
   // read_response_thread_.
@@ -161,23 +165,13 @@ class AcsAgentClient {
       request_delivery_status_mtx_) attempted_requests_responses_sub_;
 
   // Mutex that serves as a channel to pass the message from OnReadDone of
-  // reactor to the ClientReadMessage(). The only situation when any thread is
-  // holding the two mutexes in this class is when during the processing of
-  // Response from the server, read_response_thread_ first acquires
-  // response_read_mtx_ and then during the execution of
-  // AckOnSuccessfulDelivery(), it acquires request_delivery_status_mtx_.
-  // Hence, we use the thread annotation to enforce the response_read_mtx_
-  // to be acquired before request_delivery_status_mtx_ to avoid creating
-  // deadlock situation in future development.
-  absl::Mutex response_read_mtx_
-      ABSL_ACQUIRED_BEFORE(request_delivery_status_mtx_);
+  // reactor to the ClientReadMessage().
+  absl::Mutex response_read_mtx_;
 
   // State of the client.
   enum class ClientState {
     // The client is ready to read any Response from the server.
     kReady,
-    // The client finished reading a Response from the server.
-    kRead,
     // The client is being shutdown.
     kShutdown,
   };
@@ -185,8 +179,8 @@ class AcsAgentClient {
       ClientState::kReady;
 
   // Buffer to store the Response read from OnReadDone of reactor.
-  google::cloud::agentcommunication::v1::StreamAgentMessagesResponse
-      msg_response_ ABSL_GUARDED_BY(response_read_mtx_);
+  std::queue<google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
+      msg_responses_ ABSL_GUARDED_BY(response_read_mtx_);
 };
 
 }  // namespace agent_communication
