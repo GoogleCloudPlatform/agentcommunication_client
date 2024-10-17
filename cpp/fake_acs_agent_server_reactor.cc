@@ -62,7 +62,6 @@ void FakeAcsAgentServerReactor::OnReadDone(bool ok) {
 
 void FakeAcsAgentServerReactor::OnWriteDone(bool ok) {
   if (!ok) {
-    Finish(grpc::Status(grpc::StatusCode::UNKNOWN, "Unexpected write failure"));
     return;
   }
   absl::MutexLock lock(&response_mtx_);
