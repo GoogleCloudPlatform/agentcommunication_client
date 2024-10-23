@@ -6,6 +6,7 @@
 #include <future>
 #include <limits>
 #include <memory>
+#include <queue>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -198,34 +199,47 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
   return received_status;
 }
 
+bool AcsAgentClient::ShouldWakeUpClientReadMessage() {
+  return !msg_responses_.empty() || client_state_ == ClientState::kShutdown;
+}
+
 void AcsAgentClient::ClientReadMessage() {
   while (true) {
     // This thread will be woken up by the ReactorReadCallback() when reactor
     // calls OnReadDone() or woken up by Shutdown().
-    response_read_mtx_.LockWhen(absl::Condition(
-        +[](ClientState* client_state) {
-          return *client_state == ClientState::kRead ||
-                 *client_state == ClientState::kShutdown;
-        },
-        &client_state_));
+    // Within every iteration, if we don't shutdown, we will pop out 1 message,
+    // exit the critical section, and then process the message by calling
+    // AckOnSuccessfulDelivery() and read_callback_. In this way, we can release
+    // the lock response_read_mtx_ and avoid blocking the OnReadDone() call of
+    // the reactor.
+    response_read_mtx_.LockWhen(
+        absl::Condition(this, &AcsAgentClient::ShouldWakeUpClientReadMessage));
     if (client_state_ == ClientState::kShutdown) {
       response_read_mtx_.Unlock();
       return;
     }
-    if (msg_response_.has_message_response()) {
-      AckOnSuccessfulDelivery(msg_response_);
+    if (msg_responses_.empty()) {
+      response_read_mtx_.Unlock();
+      continue;
     }
-    read_callback_(std::move(msg_response_));
-    client_state_ = ClientState::kReady;
+    Response response = std::move(msg_responses_.front());
+    msg_responses_.pop();
     response_read_mtx_.Unlock();
+
+    // Exit the critical section and process the message.
+    if (response.has_message_response()) {
+      AckOnSuccessfulDelivery(response);
+    }
+    read_callback_(std::move(response));
   }
 }
 
 void AcsAgentClient::ReactorReadCallback(Response response) {
   // Wake up ClientReadMessage().
   absl::MutexLock lock(&response_read_mtx_);
-  msg_response_ = std::move(response);
-  client_state_ = ClientState::kRead;
+  msg_responses_.push(std::move(response));
+  ABSL_LOG(INFO) << "Producer called with response: "
+                 << absl::StrCat(msg_responses_.front());
 }
 
 void AcsAgentClient::AckOnSuccessfulDelivery(const Response& response) {
