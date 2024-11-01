@@ -1,3 +1,5 @@
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <queue>
 #include <string>
@@ -26,10 +28,10 @@ class FakeAcsAgentServerReactor
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse> {
  public:
   explicit FakeAcsAgentServerReactor(
-      absl::AnyInvocable<void(
+      std::function<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
           read_callback)
-      : read_callback_(std::move(read_callback)) {
+      : read_callback_(read_callback) {
     StartRead(&request_);
   }
 
@@ -60,7 +62,7 @@ class FakeAcsAgentServerReactor
   // Callback invoked in OnReadDone to process the request from the client.
   // Injected during construction to allow the caller of this class to
   // control how to process the messages from the client.
-  absl::AnyInvocable<void(
+  std::function<void(
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
       read_callback_;
 
@@ -86,10 +88,10 @@ class FakeAcsAgentServiceImpl final
           CallbackService {
  public:
   explicit FakeAcsAgentServiceImpl(
-      absl::AnyInvocable<void(
+      std::function<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
           read_callback)
-      : read_callback_(std::move(read_callback)) {}
+      : read_callback_(read_callback) {}
 
   grpc::ServerBidiReactor<
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest,
@@ -107,8 +109,9 @@ class FakeAcsAgentServiceImpl final
 
  private:
   absl::Mutex reactor_mtx_;
+  grpc::CallbackServerContext* context_ ABSL_GUARDED_BY(reactor_mtx_);
   FakeAcsAgentServerReactor* reactor_ ABSL_GUARDED_BY(reactor_mtx_) = nullptr;
-  absl::AnyInvocable<void(
+  std::function<void(
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
       read_callback_;
 };
@@ -119,12 +122,17 @@ class FakeAcsAgentServiceImpl final
 class FakeAcsAgentServer {
  public:
   explicit FakeAcsAgentServer(grpc::Service* service);
-  grpc::Server* GetServer() { return server_.get(); }
-  std::string GetServerAddress() { return server_address_; }
+  void Shutdown(std::chrono::system_clock::time_point deadline)
+      ABSL_LOCKS_EXCLUDED(server_mtx_);
+  void Wait() ABSL_LOCKS_EXCLUDED(server_mtx_);
+  std::string GetServerAddress() ABSL_LOCKS_EXCLUDED(server_mtx_);
 
  private:
-  std::unique_ptr<grpc::Server> server_;
-  std::string server_address_;
+  absl::Mutex server_mtx_;
+  std::unique_ptr<grpc::Server> server_ ABSL_GUARDED_BY(server_mtx_);
+  std::string server_address_ ABSL_GUARDED_BY(server_mtx_);
+  std::shared_ptr<grpc::ServerCredentials> server_credentials_
+      ABSL_GUARDED_BY(server_mtx_);
 };
 
 }  // namespace agent_communication

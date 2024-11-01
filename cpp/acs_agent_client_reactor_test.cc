@@ -21,9 +21,6 @@
 #include "third_party/grpc/include/grpcpp/channel.h"
 #include "third_party/grpc/include/grpcpp/create_channel.h"
 #include "third_party/grpc/include/grpcpp/security/credentials.h"
-#include "third_party/grpc/include/grpcpp/security/server_credentials.h"
-#include "third_party/grpc/include/grpcpp/server.h"
-#include "third_party/grpc/include/grpcpp/server_builder.h"
 #include "third_party/grpc/include/grpcpp/support/channel_arguments.h"
 #include "third_party/grpc/include/grpcpp/support/status.h"
 
@@ -125,17 +122,11 @@ class AcsAgentClientReactorTest : public ::testing::Test {
 
   void TearDown() override {
     ABSL_VLOG(2) << "Shutting down fake server during teardown of tests.";
-    std::thread wait_for_reactor_termination_([this]() {
-      grpc::Status status = reactor_->Await();
-      ABSL_VLOG(1) << "client terminate status is: " << status.error_code();
-    });
     // Shutdown the server.
     std::chrono::system_clock::time_point deadline =
         std::chrono::system_clock::now() + std::chrono::seconds(2);
-    server_.GetServer()->Shutdown(deadline);
-    server_.GetServer()->Wait();
-
-    wait_for_reactor_termination_.join();
+    server_.Shutdown(deadline);
+    server_.Wait();
   }
 
   // Promise to capture the request sent by the client.
@@ -154,8 +145,10 @@ TEST_F(AcsAgentClientReactorTest, TestAddRequest) {
   std::promise<Response> response_promise;
   std::future<Response> response_future = response_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [&response_promise](Response response) {
-        response_promise.set_value(std::move(response));
+      std::move(stub_), [&response_promise](Response response, bool ok) {
+        if (ok) {
+          response_promise.set_value(std::move(response));
+        }
       });
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
@@ -192,8 +185,10 @@ TEST_F(AcsAgentClientReactorTest, TestOnReadSuccessfully) {
   std::promise<Response> response_promise;
   std::future<Response> response_future = response_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [&response_promise](Response response) {
-        response_promise.set_value(std::move(response));
+      std::move(stub_), [&response_promise](Response response, bool ok) {
+        if (ok) {
+          response_promise.set_value(std::move(response));
+        }
       });
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(1)));
@@ -227,8 +222,8 @@ TEST_F(AcsAgentClientReactorTest, TestOnReadSuccessfully) {
 // server shutdown.
 TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
   // Create a client reactor with a read callback to do nothing.
-  reactor_ = std::make_unique<AcsAgentClientReactor>(std::move(stub_),
-                                                     [](Response response) {});
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response response, bool ok) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_VLOG(2) << "Setup done";
@@ -244,8 +239,8 @@ TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
   // Shutdown the server.
   std::chrono::system_clock::time_point deadline =
       std::chrono::system_clock::now() + std::chrono::seconds(10);
-  server_.GetServer()->Shutdown(deadline);
-  server_.GetServer()->Wait();
+  server_.Shutdown(deadline);
+  server_.Wait();
 
   // Verify that the status is captured by the promise.
   std::future_status status = status_future.wait_for(std::chrono::seconds(10));
@@ -260,8 +255,8 @@ TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
 // capture the right status.
 TEST_F(AcsAgentClientReactorTest, TestCancel) {
   // Create a client reactor with a read callback to do nothing.
-  reactor_ = std::make_unique<AcsAgentClientReactor>(std::move(stub_),
-                                                     [](Response response) {});
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response response, bool ok) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_LOG(INFO) << "Setup done";

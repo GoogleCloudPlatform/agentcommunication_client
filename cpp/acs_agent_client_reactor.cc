@@ -35,7 +35,7 @@ using AcsStub =
 
 AcsAgentClientReactor::AcsAgentClientReactor(
     std::unique_ptr<AcsStub> stub,
-    absl::AnyInvocable<void(Response)> read_callback)
+    absl::AnyInvocable<void(Response, bool)> read_callback)
     : stub_(std::move(stub)), read_callback_(std::move(read_callback)) {
   stub_->async()->StreamAgentMessages(&context_, this);
   StartRead(&response_);
@@ -44,7 +44,7 @@ AcsAgentClientReactor::AcsAgentClientReactor(
 
 AcsAgentClientReactor::AcsAgentClientReactor(
     std::unique_ptr<AcsStub> stub,
-    absl::AnyInvocable<void(Response)> read_callback,
+    absl::AnyInvocable<void(Response, bool)> read_callback,
     const AgentConnectionId& agent_connection_id)
     : stub_(std::move(stub)), read_callback_(std::move(read_callback)) {
   context_.AddMetadata("authentication", "Bearer " + agent_connection_id.token);
@@ -82,6 +82,15 @@ bool AcsAgentClientReactor::Cancel() {
   return true;
 }
 
+AcsAgentClientReactor::~AcsAgentClientReactor() {
+  Cancel();
+  grpc::Status status = Await();
+  ABSL_LOG(INFO) << absl::StrFormat(
+      "AcsAgentClientReactor is destroyed with termination status code: %d "
+      "and message: %s and details: %s",
+      status.error_code(), status.error_message(), status.error_details());
+}
+
 void AcsAgentClientReactor::OnWriteDone(bool ok) {
   if (!ok) {
     ABSL_LOG(WARNING) << "OnWriteDone not ok";
@@ -115,13 +124,14 @@ void AcsAgentClientReactor::Ack(std::string message_id) {
 void AcsAgentClientReactor::OnReadDone(bool ok) {
   if (!ok) {
     ABSL_LOG(WARNING) << "OnReadDone not ok";
+    read_callback_(Response(), false);
     return;
   }
   if (response_.has_message_body()) {
     ABSL_VLOG(1) << "Client Ack on message with id: " << response_.message_id();
     Ack(response_.message_id());
   }
-  read_callback_(std::move(response_));
+  read_callback_(std::move(response_), true);
   StartRead(&response_);
 }
 
@@ -137,7 +147,7 @@ void AcsAgentClientReactor::OnDone(const ::grpc::Status& status) {
 grpc::Status AcsAgentClientReactor::Await() {
   status_mtx_.LockWhen(
       absl::Condition(+[](bool* done) { return *done; }, &rpc_done_));
-  grpc::Status status = std::move(rpc_final_status_);
+  grpc::Status status = rpc_final_status_;
   status_mtx_.Unlock();
   return status;
 }

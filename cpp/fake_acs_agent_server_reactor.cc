@@ -1,5 +1,6 @@
 #include "third_party/agentcommunication_client/cpp/fake_acs_agent_server_reactor.h"
 
+#include <chrono>
 #include <memory>
 #include <queue>
 #include <string>
@@ -84,7 +85,8 @@ grpc::ServerBidiReactor<Request, Response>*
 FakeAcsAgentServiceImpl::StreamAgentMessages(
     grpc::CallbackServerContext* context) {
   absl::MutexLock lock(&reactor_mtx_);
-  reactor_ = new FakeAcsAgentServerReactor(std::move(read_callback_));
+  reactor_ = new FakeAcsAgentServerReactor(read_callback_);
+  context_ = context;
   return reactor_;
 }
 
@@ -102,11 +104,29 @@ bool FakeAcsAgentServiceImpl::IsReactorCreated() {
 }
 
 FakeAcsAgentServer::FakeAcsAgentServer(grpc::Service* service) {
+  absl::MutexLock lock(&server_mtx_);
   grpc::ServerBuilder builder;
   server_address_ = "0.0.0.0:50051";
-  builder.AddListeningPort(server_address_, grpc::InsecureServerCredentials());
+  server_credentials_ = grpc::InsecureServerCredentials();
+  builder.AddListeningPort(server_address_, server_credentials_);
   builder.RegisterService(service);
   server_ = builder.BuildAndStart();
+}
+
+void FakeAcsAgentServer::Shutdown(
+    std::chrono::system_clock::time_point deadline) {
+  absl::MutexLock lock(&server_mtx_);
+  server_->Shutdown(deadline);
+}
+
+void FakeAcsAgentServer::Wait() {
+  absl::MutexLock lock(&server_mtx_);
+  server_->Wait();
+}
+
+std::string FakeAcsAgentServer::GetServerAddress() {
+  absl::MutexLock lock(&server_mtx_);
+  return server_address_;
 }
 
 }  // namespace agent_communication

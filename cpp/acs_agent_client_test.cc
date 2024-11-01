@@ -72,6 +72,24 @@ bool WaitUntil(absl::AnyInvocable<bool()> condition, absl::Duration timeout,
   return false;
 }
 
+// Creates a stub to the ACS Agent Communication service.
+std::unique_ptr<AcsStub> CreateStub(std::string address) {
+  grpc::ChannelArguments channel_args;
+  // Keepalive settings
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 600 * 1000);  // 600 seconds
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
+                      100 * 1000);  // 100 seconds
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateCustomChannel(
+      address, grpc::InsecureChannelCredentials(), channel_args);
+  std::chrono::system_clock::time_point deadline =
+      std::chrono::system_clock::now() + std::chrono::seconds(20);
+  if (!channel->WaitForConnected(deadline)) {
+    ABSL_LOG(WARNING) << "Failed to connect to server.";
+  }
+  return google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
+      channel);
+}
+
 // Test fixture for AcsAgentClient.
 // It sets up a fake ACS Agent server and create a client to connect to server.
 class AcsAgentClientTest : public ::testing::Test {
@@ -85,36 +103,27 @@ class AcsAgentClientTest : public ::testing::Test {
             absl::SleepFor(custom_server_channel_.delay_duration);
           }
         }),
-        server_(&service_) {
+        server_(std::make_unique<FakeAcsAgentServer>(&service_)) {
     absl::SetGlobalVLogLevel(0);
   }
 
   void SetUp() override {
-    grpc::ChannelArguments channel_args;
-    // Keepalive settings
-    channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 600 * 1000);  // 600 seconds
-    channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
-                        100 * 1000);  // 100 seconds
-    std::shared_ptr<::grpc::Channel> channel = grpc::CreateCustomChannel(
-        server_.GetServerAddress(), grpc::InsecureChannelCredentials(),
-        channel_args);
-    std::chrono::system_clock::time_point deadline =
-        std::chrono::system_clock::now() + std::chrono::seconds(10);
-    ASSERT_TRUE(channel->WaitForConnected(deadline));
-    stub_ = google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
-        channel);
-
+    stub_ = CreateStub(server_->GetServerAddress());
     // Make sure server does not delay response.
     SetServerDelay(false, absl::ZeroDuration());
 
     // Create the client. Upon receipt of the Response from server, the client
     // will write the response to custom_client_channel_.
     client_ = AcsAgentClient::Create(
-        std::move(stub_), AgentConnectionId(), [this](Response response) {
+        std::move(stub_), AgentConnectionId(),
+        [this](Response response) {
           absl::MutexLock lock(&custom_client_channel_.mtx);
           custom_client_channel_.responses.push_back(std::move(response));
           ABSL_VLOG(2) << "response read: "
                        << absl::StrCat(custom_client_channel_.responses.back());
+        },
+        [address = server_->GetServerAddress()]() {
+          return CreateStub(address);
         });
     ASSERT_OK(client_);
 
@@ -147,15 +156,15 @@ class AcsAgentClientTest : public ::testing::Test {
 
   void TearDown() override {
     ABSL_VLOG(2) << "Shutting down fake server during teardown of tests.";
-    std::thread wait_for_reactor_termination_([this]() {
-      grpc::Status status = (*client_)->AwaitReactor();
-      ABSL_VLOG(1) << "reactor terminate status is: " << status.error_code();
-    });
+    if (client_.ok()) {
+      (*client_)->Shutdown();
+      *client_ = nullptr;
+    }
     std::chrono::system_clock::time_point deadline =
         std::chrono::system_clock::now() + std::chrono::seconds(2);
-    server_.GetServer()->Shutdown(deadline);
-    server_.GetServer()->Wait();
-    wait_for_reactor_termination_.join();
+    server_->Shutdown(deadline);
+    server_->Wait();
+    server_ = nullptr;
   }
 
   // Sets the server whether to delay the response for the given duration.
@@ -168,7 +177,7 @@ class AcsAgentClientTest : public ::testing::Test {
   std::thread read_message_thread_;
   std::unique_ptr<AcsStub> stub_;
   FakeAcsAgentServiceImpl service_;
-  FakeAcsAgentServer server_;
+  std::unique_ptr<FakeAcsAgentServer> server_;
   CustomClientChannel custom_client_channel_;
   CustomServerChannel custom_server_channel_;
   absl::StatusOr<std::unique_ptr<AcsAgentClient>> client_;
@@ -498,6 +507,117 @@ TEST_F(AcsAgentClientTest, TestWriteSuccessfullyAfterReadingRepeatedly) {
       }
     }
   }
+}
+
+TEST_F(AcsAgentClientTest, TestClientRecreatedAfterServerCancellation) {
+  // Make sure server does not delay response.
+  SetServerDelay(false, absl::ZeroDuration());
+  std::chrono::system_clock::time_point deadline =
+      std::chrono::system_clock::now() + std::chrono::seconds(1);
+  server_->Shutdown(deadline);
+  server_->Wait();
+  server_ = nullptr;
+  server_ = std::make_unique<FakeAcsAgentServer>(&service_);
+
+  // Create a channel to the server, and ensure server is connectable.
+  grpc::ChannelArguments channel_args;
+  // Keepalive settings
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 600 * 1000);  // 600 seconds
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
+                      100 * 1000);  // 100 seconds
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateCustomChannel(
+      server_->GetServerAddress(), grpc::InsecureChannelCredentials(),
+      channel_args);
+  deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+  ASSERT_TRUE(channel->WaitForConnected(deadline));
+
+  Request request;
+  request.set_message_id(absl::StrCat(absl::ToUnixMicros(absl::Now())));
+  request.mutable_message_body()->mutable_body()->set_value(
+      absl::StrCat("hello_world_0"));
+  ASSERT_TRUE(WaitUntil(
+      [this, &request]() { return (*client_)->AddRequest(request).ok(); },
+      absl::Seconds(10), absl::Milliseconds(100)));
+
+  ASSERT_TRUE(WaitUntil(
+      [this]() {
+        absl::MutexLock lock(&custom_client_channel_.mtx);
+        return custom_client_channel_.responses.size() == 2;
+      },
+      absl::Seconds(10), absl::Seconds(0.1)));
+
+  ASSERT_TRUE(WaitUntil(
+      [this]() {
+        absl::MutexLock lock(&custom_server_channel_.mtx);
+        return custom_server_channel_.requests.size() == 2;
+      },
+      absl::Seconds(10), absl::Seconds(0.1)));
+
+  // Verify that the server has received two requests, one for registration and
+  // one for the request.
+  std::string registration_message_id;
+  {
+    absl::MutexLock lock(&custom_server_channel_.mtx);
+    EXPECT_TRUE(custom_server_channel_.requests[0].has_register_connection());
+    registration_message_id = custom_server_channel_.requests[0].message_id();
+    EXPECT_EQ(custom_server_channel_.requests[1].message_id(),
+              request.message_id());
+    EXPECT_EQ(custom_server_channel_.requests[1].message_body().body().value(),
+              "hello_world_0");
+    custom_server_channel_.requests.clear();
+  }
+
+  // Verify that client has received 2 responses, one for the registration and
+  // one for request.
+  {
+    absl::MutexLock lock(&custom_client_channel_.mtx);
+    EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
+              registration_message_id);
+    EXPECT_EQ(custom_client_channel_.responses[1].message_id(),
+              request.message_id());
+    custom_client_channel_.responses.clear();
+  }
+}
+
+TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
+  // Shutdown the client.
+  *client_ = nullptr;
+  // Make sure server does delay response.
+  SetServerDelay(true, absl::Seconds(5));
+  std::chrono::system_clock::time_point deadline =
+      std::chrono::system_clock::now() + std::chrono::seconds(1);
+  server_->Shutdown(deadline);
+  server_->Wait();
+  server_ = nullptr;
+  server_ = std::make_unique<FakeAcsAgentServer>(&service_);
+
+  // Create a channel to the server, and ensure server is connectable.
+  grpc::ChannelArguments channel_args;
+  // Keepalive settings
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 600 * 1000);  // 600 seconds
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
+                      100 * 1000);  // 100 seconds
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateCustomChannel(
+      server_->GetServerAddress(), grpc::InsecureChannelCredentials(),
+      channel_args);
+  deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+  ASSERT_TRUE(channel->WaitForConnected(deadline));
+
+  client_ = AcsAgentClient::Create(
+      CreateStub(server_->GetServerAddress()), AgentConnectionId(),
+      [this](Response response) {
+        absl::MutexLock lock(&custom_client_channel_.mtx);
+        custom_client_channel_.responses.push_back(std::move(response));
+        ABSL_VLOG(2) << "response read: "
+                     << absl::StrCat(custom_client_channel_.responses.back());
+      },
+      [address = server_->GetServerAddress()]() {
+        return CreateStub(address);
+      });
+  EXPECT_EQ(client_.status().code(), absl::StatusCode::kDeadlineExceeded);
+  EXPECT_THAT(client_.status().message(),
+              testing::HasSubstr(
+                  "Timeout waiting for promise to be set for message with id"));
 }
 
 }  // namespace

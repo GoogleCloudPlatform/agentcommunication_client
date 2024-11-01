@@ -42,7 +42,10 @@ class AcsAgentClient {
       AgentConnectionId agent_connection_id,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
-          read_callback);
+          read_callback,
+      absl::AnyInvocable<std::unique_ptr<
+          google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+          stub_generator);
 
   // Sends a StreamAgentMessagesRequest to the server.
   // It will automatically retry if the request was not acknowledged by the
@@ -52,7 +55,8 @@ class AcsAgentClient {
   // object. Returns status of the send request.
   absl::Status AddRequest(
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest&
-          request) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
+          request) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
   // Sends a MessageBody to the server. The input parameter
   // message_body will be moved to create a StreamAgentMessagesRequest and then
@@ -60,23 +64,32 @@ class AcsAgentClient {
   // Returns status of AddRequest().
   absl::Status SendMessage(
       google::cloud::agentcommunication::v1::MessageBody message_body)
+      ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
+          ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+
+  // Shuts down the client by joining the restart client thread and the
+  // read_response_thread_, and then cancel the RPC.
+  void Shutdown() ABSL_LOCKS_EXCLUDED(reactor_mtx_)
       ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
-
-  // Cancels the RPC.
-  void CancelReactor() { reactor_->Cancel(); }
-
-  // Awaits the termination of the RPC. Returns the final status of the RPC.
-  grpc::Status AwaitReactor() { return reactor_->Await(); }
 
   ~AcsAgentClient() { Shutdown(); }
 
  private:
-  AcsAgentClient(AgentConnectionId connection_id)
-      : connection_id_(std::move(connection_id)) {}
+  AcsAgentClient(
+      AgentConnectionId connection_id,
+      absl::AnyInvocable<void(
+          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
+          read_callback,
+      absl::AnyInvocable<std::unique_ptr<
+          google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+          stub_generator)
+      : connection_id_(std::move(connection_id)),
+        stub_generator_(std::move(stub_generator)),
+        read_callback_(std::move(read_callback)) {}
 
-  // Initializes the client. Spins up read_response_thread_ to process the
-  // responses from the server and sends the registration request.
-  absl::Status Init();
+  // Initializes the client by registering the connection.
+  absl::Status Init() ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_)
+      ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
 
   // Adds a request to the buffer of the reactor and waits for the response from
   // the server.
@@ -88,25 +101,39 @@ class AcsAgentClient {
   // Returns: status of the send request.
   absl::Status AddRequestAndWaitForResponse(
       const google::cloud::agentcommunication::v1::StreamAgentMessagesRequest&
-          request) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
+          request) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+
+  // Registers the connection with the server. Note this function holds the
+  // reactor_mtx_ lock entire time intentionally to keep the client from
+  // sending any other requests.
+  absl::Status RegisterConnection(
+      const google::cloud::agentcommunication::v1::StreamAgentMessagesRequest&
+          request) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_);
 
   // Processes Responses from the server. Acknowledges the response from server
   // and then calls the read_callback_ to process the message. This function
   // will be executed in the read_response_thread_.
-  void ClientReadMessage() ABSL_LOCKS_EXCLUDED(response_read_mtx_);
+  void ClientReadMessage() ABSL_LOCKS_EXCLUDED(response_read_mtx_)
+      ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
 
   // Checks if the ClientReadMessage() should be woken up.
   bool ShouldWakeUpClientReadMessage()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(response_read_mtx_);
 
   // Callback invoked in OnReadDone of reactor to process the Response.
-  // Wakes up the read_response_thread_ and passes the received Response to be
-  // handled by the ClientReadMessage(). In this way, the reactor's OnReadDone
-  // call will return fast, and the actual processing of the Response is
-  // delegated to the read_response_thread_.
+  // If OnReadDone(true), wakes up the read_response_thread_ and passes the
+  // received Response to be handled by the ClientReadMessage(). In this way,
+  // the reactor's OnReadDone call will return fast, and the actual processing
+  // of the Response is delegated to the read_response_thread_.
+  // If OnReadDone(false), the RPC is terminated, wakes up the
+  // restart_client_thread_ to re-initialize the client.
   void ReactorReadCallback(
       google::cloud::agentcommunication::v1::StreamAgentMessagesResponse
-          response) ABSL_LOCKS_EXCLUDED(response_read_mtx_);
+          response,
+      bool ok) ABSL_LOCKS_EXCLUDED(response_read_mtx_)
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
   // Acknowledges the Response from the server for a successful delivery of a
   // Request. ACS server normally sends a MessageResponse as an acknowledgement
@@ -119,9 +146,19 @@ class AcsAgentClient {
       const google::cloud::agentcommunication::v1::StreamAgentMessagesResponse&
           response) ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
 
-  // Shuts down the client by cancelling the RPC and joining the
-  // read_response_thread_.
-  void Shutdown();
+  // Restarts the client when the RPC is terminated. This function will be
+  // executed in the restart_client_thread_.
+  // Listens to the ReactorReadCallback(). When OnReadDone(false), this function
+  // will be waken up to restart the client, i.e., create a new stub and
+  // connection id, re-create the stream, and register the connection.
+  void RestartClient() ABSL_LOCKS_EXCLUDED(reactor_mtx_)
+      ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_);
+
+  // Generates a new stub and connection id and returns the stub, called within
+  // the restart_client_thread_.
+  std::unique_ptr<
+      google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+  GenerateConnectionIdAndStub();
 
   // Creates a unique message id. Currently, it is "{random
   // number}-{current_timestamp}". The requirement of the uniqueness from ACS
@@ -139,17 +176,31 @@ class AcsAgentClient {
                                 absl::Status status)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(request_delivery_status_mtx_);
 
-  // Random number generator for creating message id.
+  // TODO: b/376530555 - Make the random number generation thread-safe. The gen_
+  // is not thread-safe, needs to be protected by a mutex. Random number
+  // generator for creating message id.
   absl::BitGen gen_;
 
   // Dedicated to reading the Response from the server.
   std::thread read_response_thread_;
 
+  // TODO: b/376530555 - Make the connection id thread-safe.
   // Connection id of the agent.
   AgentConnectionId connection_id_;
 
+  // Mutex to protect the reactor_ and other variables that are only accessed
+  // by the reactor_ for write operations.
+  absl::Mutex reactor_mtx_ ABSL_ACQUIRED_BEFORE(request_delivery_status_mtx_);
+
+  // Generates a new stub when the client needs to restart the client. We have a
+  // default implementation, this function pointer allows us to pass in a custom
+  // implementation for testing purposes and other use cases.
+  absl::AnyInvocable<std::unique_ptr<
+      google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+      stub_generator_ = nullptr;
+
   // Reactor to handle the gRPC communication with the server.
-  std::unique_ptr<AcsAgentClientReactor> reactor_;
+  std::unique_ptr<AcsAgentClientReactor> reactor_ ABSL_GUARDED_BY(reactor_mtx_);
 
   // Callback injected by the client to process the messages from the server.
   absl::AnyInvocable<void(
@@ -172,11 +223,25 @@ class AcsAgentClient {
   enum class ClientState {
     // The client is ready to read any Response from the server.
     kReady,
+    // Stream not initialized,
+    kStreamNotInitialized,
+    // The RPC is down, needs a restart.
+    kStreamClosed,
+    // The RPC failed to be restarted.
+    kStreamFailedToRestart,
     // The client is being shutdown.
     kShutdown,
   };
-  ClientState client_state_ ABSL_GUARDED_BY(response_read_mtx_) =
+
+  // State of the client read thread.
+  ClientState client_read_state_ ABSL_GUARDED_BY(response_read_mtx_) =
       ClientState::kReady;
+
+  // State of the stream/RPC.
+  ClientState stream_state_ ABSL_GUARDED_BY(reactor_mtx_) =
+      ClientState::kStreamNotInitialized;
+
+  std::thread restart_client_thread_;
 
   // Buffer to store the Response read from OnReadDone of reactor.
   std::queue<google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>

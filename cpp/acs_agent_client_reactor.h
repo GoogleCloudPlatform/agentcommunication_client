@@ -38,7 +38,8 @@ class AcsAgentClientReactor
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>
           stub,
       absl::AnyInvocable<void(
-          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
+          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
+          bool)>
           read_callback);
 
   explicit AcsAgentClientReactor(
@@ -46,7 +47,8 @@ class AcsAgentClientReactor
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>
           stub,
       absl::AnyInvocable<void(
-          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
+          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
+          bool)>
           read_callback,
       const AgentConnectionId& agent_connection_id);
 
@@ -68,6 +70,8 @@ class AcsAgentClientReactor
 
   // Cancels the RPC if it is not terminated yet.
   bool Cancel() ABSL_LOCKS_EXCLUDED(status_mtx_);
+
+  ~AcsAgentClientReactor();
 
  private:
   // Override methods of ClientBidiReactor. These methods are called by gRPC
@@ -99,7 +103,7 @@ class AcsAgentClientReactor
   // Injected during construction to allow the caller of this class to
   // control how to process the messages from the server.
   absl::AnyInvocable<void(
-      google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
+      google::cloud::agentcommunication::v1::StreamAgentMessagesResponse, bool)>
       read_callback_;
   // Buffer to store the response in StartRead.
   google::cloud::agentcommunication::v1::StreamAgentMessagesResponse response_;

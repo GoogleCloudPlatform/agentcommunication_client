@@ -2,9 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <future>
-#include <limits>
 #include <memory>
 #include <queue>
 #include <string>
@@ -17,7 +15,6 @@
 #include "third_party/absl/functional/bind_front.h"
 #include "third_party/absl/log/absl_log.h"
 #include "third_party/absl/memory/memory.h"
-#include "third_party/absl/random/distributions.h"
 #include "third_party/absl/status/status.h"
 #include "third_party/absl/status/statusor.h"
 #include "third_party/absl/strings/str_cat.h"
@@ -39,6 +36,8 @@ using Response =
 using Request =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesRequest;
 using MessageBody = ::google::cloud::agentcommunication::v1::MessageBody;
+using AcsStub =
+    ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     std::unique_ptr<
@@ -47,18 +46,35 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     AgentConnectionId agent_connection_id,
     absl::AnyInvocable<void(
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
-        read_callback) {
-  std::unique_ptr<AcsAgentClient> client =
-      absl::WrapUnique(new AcsAgentClient(agent_connection_id));
-  client->read_callback_ = std::move(read_callback);
-  client->reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub),
-      absl::bind_front(&AcsAgentClient::ReactorReadCallback, client.get()),
-      std::move(agent_connection_id));
-  absl::Status init_status = client->Init();
-  if (!init_status.ok()) {
-    return init_status;
+        read_callback,
+    absl::AnyInvocable<std::unique_ptr<AcsStub>()> stub_generator) {
+  // Create the client.
+  std::unique_ptr<AcsAgentClient> client = absl::WrapUnique(
+      new AcsAgentClient(agent_connection_id, std::move(read_callback),
+                         std::move(stub_generator)));
+
+  // Start the read message thread.
+  std::thread read_message_body_thread(
+      absl::bind_front(&AcsAgentClient::ClientReadMessage, client.get()));
+  client->read_response_thread_ = std::move(read_message_body_thread);
+
+  // Initialize the client.
+  {
+    absl::MutexLock lock(&client->reactor_mtx_);
+    client->reactor_ = std::make_unique<AcsAgentClientReactor>(
+        std::move(stub),
+        absl::bind_front(&AcsAgentClient::ReactorReadCallback, client.get()),
+        std::move(agent_connection_id));
+    absl::Status init_status = client->Init();
+    if (!init_status.ok()) {
+      return init_status;
+    }
   }
+
+  // Start the restart client thread after the Init() was successful.
+  std::thread restart_client_thread(
+      absl::bind_front(&AcsAgentClient::RestartClient, client.get()));
+  client->restart_client_thread_ = std::move(restart_client_thread);
   return client;
 }
 
@@ -115,20 +131,16 @@ absl::Status AcsAgentClient::SendMessage(MessageBody message_body) {
 }
 
 absl::Status AcsAgentClient::Init() {
-  std::thread read_message_body_thread(
-      absl::bind_front(&AcsAgentClient::ClientReadMessage, this));
-  read_response_thread_ = std::move(read_message_body_thread);
-
   // Register the connection. The registration request should only be sent once.
   std::unique_ptr<Request> registration_request =
       agent_communication::MakeRequestWithRegistration(
           CreateMessageUuid(), connection_id_.channel_id,
           connection_id_.resource_id);
-  if (absl::Status status = AddRequestAndWaitForResponse(*registration_request);
+  if (absl::Status status = RegisterConnection(*registration_request);
       !status.ok()) {
-    Shutdown();
     return status;
   }
+  stream_state_ = ClientState::kReady;
   return absl::OkStatus();
 }
 
@@ -147,9 +159,23 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
   }
   // TODO: Make the retry parameters configurable.
   for (int i = 0; i < 5; ++i) {
-    if (reactor_->AddRequest(request)) {
-      added_to_reactor = true;
-      break;
+    {
+      absl::MutexLock lock(&reactor_mtx_);
+      if (request.has_register_connection() &&
+          (stream_state_ != ClientState::kStreamNotInitialized &&
+           stream_state_ != ClientState::kStreamClosed)) {
+        return absl::InternalError(
+            "The stream is not in the correct state to accept new registration "
+            "request.");
+      }
+      if (request.has_message_body() && stream_state_ != ClientState::kReady) {
+        return absl::FailedPreconditionError(
+            "The stream is not ready to accept new MessageBody.");
+      }
+      if (reactor_->AddRequest(request)) {
+        added_to_reactor = true;
+        break;
+      }
     }
     int delayMillis = std::min(100 * (1 << i), 2000);
     absl::SleepFor(absl::Milliseconds(delayMillis));
@@ -200,7 +226,8 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
 }
 
 bool AcsAgentClient::ShouldWakeUpClientReadMessage() {
-  return !msg_responses_.empty() || client_state_ == ClientState::kShutdown;
+  return !msg_responses_.empty() ||
+         client_read_state_ == ClientState::kShutdown;
 }
 
 void AcsAgentClient::ClientReadMessage() {
@@ -214,7 +241,7 @@ void AcsAgentClient::ClientReadMessage() {
     // the reactor.
     response_read_mtx_.LockWhen(
         absl::Condition(this, &AcsAgentClient::ShouldWakeUpClientReadMessage));
-    if (client_state_ == ClientState::kShutdown) {
+    if (client_read_state_ == ClientState::kShutdown) {
       response_read_mtx_.Unlock();
       return;
     }
@@ -234,12 +261,148 @@ void AcsAgentClient::ClientReadMessage() {
   }
 }
 
-void AcsAgentClient::ReactorReadCallback(Response response) {
+void AcsAgentClient::ReactorReadCallback(Response response, bool ok) {
+  if (!ok) {
+    ABSL_LOG(WARNING) << "ReactorReadCallback not ok";
+    // Wakes up RestartReactor() to restart the stream.
+    absl::MutexLock lock(&reactor_mtx_);
+    stream_state_ = ClientState::kStreamClosed;
+    return;
+  }
   // Wake up ClientReadMessage().
   absl::MutexLock lock(&response_read_mtx_);
   msg_responses_.push(std::move(response));
-  ABSL_LOG(INFO) << "Producer called with response: "
-                 << absl::StrCat(msg_responses_.front());
+  ABSL_VLOG(2) << "Producer called with response: "
+               << absl::StrCat(msg_responses_.front());
+}
+
+absl::Status AcsAgentClient::RegisterConnection(const Request& request) {
+  // Add request message to the reactor and create the promise-future pair to
+  // wait for the response from the server.
+  const std::string& message_id = request.message_id();
+  std::promise<absl::Status> responsePromise;
+  std::future<absl::Status> responseFuture = responsePromise.get_future();
+  {
+    absl::MutexLock lock(&request_delivery_status_mtx_);
+    attempted_requests_responses_sub_.emplace(message_id,
+                                              std::move(responsePromise));
+  }
+  bool added_to_reactor = reactor_->AddRequest(request);
+  if (!added_to_reactor) {
+    absl::MutexLock lock(&request_delivery_status_mtx_);
+    SetValueAndRemovePromise(message_id, absl::OkStatus());
+    return absl::InternalError(
+        "Failed to add registration request to reactor, because the existing "
+        "write buffer is full. This should never happen, because the "
+        "registration request should be the first request sent to the server.");
+  }
+
+  // Now that we have added the request to the reactor, wait for the response
+  // from the server.
+  // Note that during the wait here, we hold the reactor_mtx_ lock. This is
+  // intentional to keep the client from sending any other requests. The
+  // downside is that if reactor calls OnReadDone(ok=false), which indicates the
+  // failure of register connection, ReactorReadCallback() will not be able to
+  // acquire the reactor_mtx_ lock until the wait here is done. This is fine
+  // for now, because this function will still return a failed status, and wait
+  // for the caller of this class to retry.
+  std::future_status status = responseFuture.wait_for(std::chrono::seconds(2));
+  absl::Status received_status = absl::OkStatus();
+  if (status == std::future_status::ready) {
+    received_status = responseFuture.get();
+    return received_status;
+  }
+
+  if (status == std::future_status::timeout) {
+    ABSL_LOG(WARNING) << "timeout of waiting for response: " << message_id;
+    received_status = absl::DeadlineExceededError(absl::StrFormat(
+        "Timeout waiting for promise to be set for message with id: %s.",
+        message_id));
+  }
+  if (status == std::future_status::deferred) {
+    ABSL_LOG(WARNING)
+        << "This should never happen: get a deferred status from the future "
+           "when waiting for response for message with id: "
+        << message_id;
+    received_status = absl::InternalError(absl::StrFormat(
+        "Future is deferred for message with id: %s. This should never happen.",
+        message_id));
+  }
+
+  // Set a dummy status value and clean up the promise if we don't receive the
+  // response from the server.
+  absl::MutexLock lock(&request_delivery_status_mtx_);
+  SetValueAndRemovePromise(message_id, absl::OkStatus());
+  return received_status;
+}
+
+void AcsAgentClient::RestartClient() {
+  while (true) {
+    reactor_mtx_.LockWhen(absl::Condition(
+        +[](ClientState* stream_state) {
+          return *stream_state == ClientState::kStreamClosed ||
+                 *stream_state == ClientState::kShutdown;
+        },
+        &stream_state_));
+    // Terminate the thread if the client is being shutdown.
+    if (stream_state_ == ClientState::kShutdown) {
+      reactor_mtx_.Unlock();
+      return;
+    }
+
+    // Wait for the reactor to be terminated, capture the status, and then
+    // restart the reactor.
+    // TODO: need to determine if we want to retry based on the status, and add
+    // retry logic with backoff mechanism.
+    if (reactor_ != nullptr) {
+      grpc::Status status = reactor_->Await();
+      ABSL_LOG(INFO) << absl::StrFormat(
+          "RestartReactor thread trying to restart the stream with previous "
+          "termination status code: %d and message: %s and details: %s",
+          status.error_code(), status.error_message(), status.error_details());
+    }
+    std::unique_ptr<AcsStub> stub = GenerateConnectionIdAndStub();
+    if (stub == nullptr) {
+      stream_state_ = ClientState::kStreamFailedToRestart;
+      reactor_mtx_.Unlock();
+      return;
+    }
+    reactor_ = std::make_unique<AcsAgentClientReactor>(
+        std::move(stub),
+        absl::bind_front(&AcsAgentClient::ReactorReadCallback, this),
+        connection_id_);
+    if (reactor_ == nullptr) {
+      stream_state_ = ClientState::kStreamFailedToRestart;
+      reactor_mtx_.Unlock();
+      ABSL_LOG(WARNING) << "Failed to generate connection id and reactor.";
+      return;
+    }
+
+    // Initialize the client.
+    absl::Status init_status = Init();
+    if (!init_status.ok()) {
+      stream_state_ = ClientState::kStreamFailedToRestart;
+      reactor_mtx_.Unlock();
+      return;
+    }
+    reactor_mtx_.Unlock();
+  }
+}
+
+std::unique_ptr<AcsStub> AcsAgentClient::GenerateConnectionIdAndStub() {
+  if (stub_generator_ != nullptr) {
+    return stub_generator_();
+  }
+  absl::StatusOr<AgentConnectionId> new_connection_id =
+      agent_communication::GenerateAgentConnectionId(connection_id_.channel_id,
+                                                     false);
+  if (!new_connection_id.ok()) {
+    ABSL_LOG(WARNING) << "Failed to get connection id from agent connection "
+                      << "name: " << connection_id_.channel_id;
+    return nullptr;
+  }
+  connection_id_ = *std::move(new_connection_id);
+  return AcsAgentClientReactor::CreateStub(connection_id_.channel_id);
 }
 
 void AcsAgentClient::AckOnSuccessfulDelivery(const Response& response) {
@@ -263,21 +426,38 @@ void AcsAgentClient::AckOnSuccessfulDelivery(const Response& response) {
 }
 
 void AcsAgentClient::Shutdown() {
-  reactor_->Cancel();
   if (read_response_thread_.joinable()) {
     {
       // Wakes up ClientReadMessage() to shut it down.
       absl::MutexLock lock(&response_read_mtx_);
-      client_state_ = ClientState::kShutdown;
+      client_read_state_ = ClientState::kShutdown;
     }
     read_response_thread_.join();
+  }
+
+  // Shutdown the restart_client_thread_ before the RPC is terminated.
+  // Otherwise, the restart_client_thread_ may try to restart the RPC.
+  if (restart_client_thread_.joinable()) {
+    {
+      absl::MutexLock lock(&reactor_mtx_);
+      stream_state_ = ClientState::kShutdown;
+    }
+    restart_client_thread_.join();
+  }
+  {
+    // Don't call reactor_Await() here as it will block the thread.
+    absl::MutexLock lock(&reactor_mtx_);
+    if (reactor_ != nullptr) {
+      reactor_->Cancel();
+    }
   }
 }
 
 std::string AcsAgentClient::CreateMessageUuid() {
-  int64_t random =
-      absl::Uniform<int64_t>(gen_, 0, std::numeric_limits<int64_t>::max());
-  return absl::StrCat(random, "-", absl::ToUnixMicros(absl::Now()));
+  // TODO: b/376530555 - Make the random number generation thread-safe. The gen_
+  // is not thread-safe. int64_t random =
+  //     absl::Uniform<int64_t>(gen_, 0, std::numeric_limits<int64_t>::max());
+  return absl::StrCat(absl::ToUnixMicros(absl::Now()));
 }
 
 void AcsAgentClient::SetValueAndRemovePromise(const std::string& message_id,
