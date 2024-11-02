@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <future>
+#include <limits>
 #include <memory>
 #include <queue>
 #include <string>
@@ -15,6 +17,7 @@
 #include "third_party/absl/functional/bind_front.h"
 #include "third_party/absl/log/absl_log.h"
 #include "third_party/absl/memory/memory.h"
+#include "third_party/absl/random/distributions.h"
 #include "third_party/absl/status/status.h"
 #include "third_party/absl/status/statusor.h"
 #include "third_party/absl/strings/str_cat.h"
@@ -83,7 +86,10 @@ absl::Status AcsAgentClient::AddRequest(Request& request) {
   // TODO: Make the retry parameters configurable.
   for (int i = 0; i < 5; ++i) {
     // Generate a new message id for each attempt.
-    request.set_message_id(CreateMessageUuid());
+    {
+      absl::MutexLock lock(&reactor_mtx_);
+      request.set_message_id(CreateMessageUuid());
+    }
     latest_send_request_status = AddRequestAndWaitForResponse(request);
     if (latest_send_request_status.ok()) {
       return absl::OkStatus();
@@ -454,10 +460,9 @@ void AcsAgentClient::Shutdown() {
 }
 
 std::string AcsAgentClient::CreateMessageUuid() {
-  // TODO: b/376530555 - Make the random number generation thread-safe. The gen_
-  // is not thread-safe. int64_t random =
-  //     absl::Uniform<int64_t>(gen_, 0, std::numeric_limits<int64_t>::max());
-  return absl::StrCat(absl::ToUnixMicros(absl::Now()));
+  int64_t random =
+      absl::Uniform<int64_t>(gen_, 0, std::numeric_limits<int64_t>::max());
+  return absl::StrCat(random, "-", absl::ToUnixMicros(absl::Now()));
 }
 
 void AcsAgentClient::SetValueAndRemovePromise(const std::string& message_id,

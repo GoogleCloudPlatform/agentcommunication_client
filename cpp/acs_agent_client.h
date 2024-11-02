@@ -158,13 +158,13 @@ class AcsAgentClient {
   // the restart_client_thread_.
   std::unique_ptr<
       google::cloud::agentcommunication::v1::AgentCommunication::Stub>
-  GenerateConnectionIdAndStub();
+  GenerateConnectionIdAndStub() ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_);
 
   // Creates a unique message id. Currently, it is "{random
   // number}-{current_timestamp}". The requirement of the uniqueness from ACS
   // server is not very strict: We just need to make sure the message id is
   // unique within a couple of seconds for each agent.
-  std::string CreateMessageUuid();
+  std::string CreateMessageUuid() ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_);
 
   // Set the value of the promise and remove the promise from the map. This
   // function is used to ensure:
@@ -176,17 +176,12 @@ class AcsAgentClient {
                                 absl::Status status)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(request_delivery_status_mtx_);
 
-  // TODO: b/376530555 - Make the random number generation thread-safe. The gen_
-  // is not thread-safe, needs to be protected by a mutex. Random number
-  // generator for creating message id.
-  absl::BitGen gen_;
+  absl::BitGen gen_ ABSL_GUARDED_BY(reactor_mtx_);
 
   // Dedicated to reading the Response from the server.
   std::thread read_response_thread_;
 
-  // TODO: b/376530555 - Make the connection id thread-safe.
-  // Connection id of the agent.
-  AgentConnectionId connection_id_;
+  AgentConnectionId connection_id_ ABSL_GUARDED_BY(reactor_mtx_);
 
   // Mutex to protect the reactor_ and other variables that are only accessed
   // by the reactor_ for write operations.
