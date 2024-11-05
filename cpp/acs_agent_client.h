@@ -67,6 +67,14 @@ class AcsAgentClient {
       ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
           ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
+  // Checks if the client is dead. If the caller of this class has failure of
+  // sending or receiving messages, it can call this function to check if the
+  // client is dead and needs a restart. If the client is dead, the caller can
+  // call Shutdown() or directly invoke destructor to clean up the client. If
+  // the client is not dead, the caller can retry sending messages later with a
+  // self-determined backoff mechanism.
+  bool IsDead() ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+
   // Shuts down the client by joining the restart client thread and the
   // read_response_thread_, and then cancel the RPC.
   void Shutdown() ABSL_LOCKS_EXCLUDED(reactor_mtx_)
@@ -218,12 +226,12 @@ class AcsAgentClient {
   enum class ClientState {
     // The client is ready to read any Response from the server.
     kReady,
-    // Stream not initialized,
+    // Stream not initialized, waiting for the first registration request.
     kStreamNotInitialized,
-    // The RPC is down, needs a restart.
-    kStreamClosed,
-    // The RPC failed to be restarted.
-    kStreamFailedToRestart,
+    // The RPC is temporarily down, waiting for a restart.
+    kStreamTemporarilyDown,
+    // The RPC failed to be initialized.
+    kStreamFailedToInitialize,
     // The client is being shutdown.
     kShutdown,
   };

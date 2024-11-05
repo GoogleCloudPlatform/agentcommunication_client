@@ -136,6 +136,18 @@ absl::Status AcsAgentClient::SendMessage(MessageBody message_body) {
   return AddRequest(request);
 }
 
+bool AcsAgentClient::IsDead() {
+  // If the stream_state_ is kStreamFailedToInitialize or kShutdown, the client
+  // is dead, no point to retry sending messages. If the stream_state_ is
+  // kStreamClosed, the restart_client_thread_ will restart the client soon, the
+  // caller can retry sending messages later with a backoff mechanism. If the
+  // stream_state_ is kStreamNotInitialized, the client is not dead yet, just
+  // waiting for the successful registration.
+  absl::MutexLock lock(&reactor_mtx_);
+  return stream_state_ == ClientState::kStreamFailedToInitialize ||
+         stream_state_ == ClientState::kShutdown;
+}
+
 absl::Status AcsAgentClient::Init() {
   // Register the connection. The registration request should only be sent once.
   std::unique_ptr<Request> registration_request =
@@ -169,7 +181,7 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
       absl::MutexLock lock(&reactor_mtx_);
       if (request.has_register_connection() &&
           (stream_state_ != ClientState::kStreamNotInitialized &&
-           stream_state_ != ClientState::kStreamClosed)) {
+           stream_state_ != ClientState::kStreamTemporarilyDown)) {
         return absl::InternalError(
             "The stream is not in the correct state to accept new registration "
             "request.");
@@ -272,7 +284,7 @@ void AcsAgentClient::ReactorReadCallback(Response response, bool ok) {
     ABSL_LOG(WARNING) << "ReactorReadCallback not ok";
     // Wakes up RestartReactor() to restart the stream.
     absl::MutexLock lock(&reactor_mtx_);
-    stream_state_ = ClientState::kStreamClosed;
+    stream_state_ = ClientState::kStreamTemporarilyDown;
     return;
   }
   // Wake up ClientReadMessage().
@@ -346,7 +358,7 @@ void AcsAgentClient::RestartClient() {
   while (true) {
     reactor_mtx_.LockWhen(absl::Condition(
         +[](ClientState* stream_state) {
-          return *stream_state == ClientState::kStreamClosed ||
+          return *stream_state == ClientState::kStreamTemporarilyDown ||
                  *stream_state == ClientState::kShutdown;
         },
         &stream_state_));
@@ -369,7 +381,7 @@ void AcsAgentClient::RestartClient() {
     }
     std::unique_ptr<AcsStub> stub = GenerateConnectionIdAndStub();
     if (stub == nullptr) {
-      stream_state_ = ClientState::kStreamFailedToRestart;
+      stream_state_ = ClientState::kStreamFailedToInitialize;
       reactor_mtx_.Unlock();
       return;
     }
@@ -378,7 +390,7 @@ void AcsAgentClient::RestartClient() {
         absl::bind_front(&AcsAgentClient::ReactorReadCallback, this),
         connection_id_);
     if (reactor_ == nullptr) {
-      stream_state_ = ClientState::kStreamFailedToRestart;
+      stream_state_ = ClientState::kStreamFailedToInitialize;
       reactor_mtx_.Unlock();
       ABSL_LOG(WARNING) << "Failed to generate connection id and reactor.";
       return;
@@ -387,7 +399,7 @@ void AcsAgentClient::RestartClient() {
     // Initialize the client.
     absl::Status init_status = Init();
     if (!init_status.ok()) {
-      stream_state_ = ClientState::kStreamFailedToRestart;
+      stream_state_ = ClientState::kStreamFailedToInitialize;
       reactor_mtx_.Unlock();
       return;
     }

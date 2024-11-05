@@ -580,8 +580,11 @@ TEST_F(AcsAgentClientTest, TestClientRecreatedAfterServerCancellation) {
 }
 
 TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
-  // Shutdown the client.
+  // Shutdown the client and test if IsClientDead() returns true.
+  (*client_)->Shutdown();
+  EXPECT_TRUE((*client_)->IsDead());
   *client_ = nullptr;
+
   // Make sure server does delay response.
   SetServerDelay(true, absl::Seconds(5));
   std::chrono::system_clock::time_point deadline =
@@ -618,6 +621,34 @@ TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
   EXPECT_THAT(client_.status().message(),
               testing::HasSubstr(
                   "Timeout waiting for promise to be set for message with id"));
+}
+
+TEST_F(AcsAgentClientTest, TestFailureToRestartClientAndClientIsDead) {
+  // Make sure server does delay response, then registration will fail to
+  // complete due to timeout.
+  SetServerDelay(true, absl::Seconds(5));
+  std::chrono::system_clock::time_point deadline =
+      std::chrono::system_clock::now() + std::chrono::seconds(1);
+  server_->Shutdown(deadline);
+  server_->Wait();
+  server_ = nullptr;
+  server_ = std::make_unique<FakeAcsAgentServer>(&service_);
+
+  // Create a channel to the server, and ensure server is connectable.
+  grpc::ChannelArguments channel_args;
+  // Keepalive settings
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 600 * 1000);  // 600 seconds
+  channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
+                      100 * 1000);  // 100 seconds
+  std::shared_ptr<grpc::Channel> channel = grpc::CreateCustomChannel(
+      server_->GetServerAddress(), grpc::InsecureChannelCredentials(),
+      channel_args);
+  deadline = std::chrono::system_clock::now() + std::chrono::seconds(10);
+  ASSERT_TRUE(channel->WaitForConnected(deadline));
+
+  // Client will transition to kStreamFailedToInitialize eventually.
+  EXPECT_TRUE(WaitUntil([this]() { return (*client_)->IsDead(); },
+                        absl::Seconds(20), absl::Seconds(0.1)));
 }
 
 }  // namespace
