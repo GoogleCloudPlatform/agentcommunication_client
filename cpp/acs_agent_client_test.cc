@@ -1,4 +1,4 @@
-#include "third_party/agentcommunication_client/cpp/acs_agent_client.h"
+#include "cpp/acs_agent_client.h"
 
 #include <chrono>
 #include <memory>
@@ -8,26 +8,26 @@
 #include <vector>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "third_party/absl/base/thread_annotations.h"
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/log/globals.h"
-#include "third_party/absl/status/status.h"
-#include "third_party/absl/status/statusor.h"
-#include "third_party/absl/strings/str_cat.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/absl/time/clock.h"
-#include "third_party/absl/time/time.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
-#include "third_party/agentcommunication_client/cpp/fake_acs_agent_server_reactor.h"
-#include "third_party/grpc/include/grpc/grpc.h"
-#include "third_party/grpc/include/grpcpp/channel.h"
-#include "third_party/grpc/include/grpcpp/create_channel.h"
-#include "third_party/grpc/include/grpcpp/security/credentials.h"
-#include "third_party/grpc/include/grpcpp/support/channel_arguments.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/absl_log.h"
+#include "absl/log/globals.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
+#include "cpp/acs_agent_helper.h"
+#include "cpp/fake_acs_agent_server_reactor.h"
+#include "grpc/include/grpc/grpc.h"
+#include "grpc/include/grpcpp/channel.h"
+#include "grpc/include/grpcpp/create_channel.h"
+#include "grpc/include/grpcpp/security/credentials.h"
+#include "grpc/include/grpcpp/support/channel_arguments.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 namespace {

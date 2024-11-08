@@ -1,4 +1,4 @@
-#include "third_party/agentcommunication_client/cpp/acs_agent_client.h"
+#include "cpp/acs_agent_client.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,22 +13,22 @@
 #include <utility>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/functional/bind_front.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/memory/memory.h"
-#include "third_party/absl/random/distributions.h"
-#include "third_party/absl/status/status.h"
-#include "third_party/absl/status/statusor.h"
-#include "third_party/absl/strings/str_cat.h"
-#include "third_party/absl/strings/str_format.h"
-#include "third_party/absl/strings/string_view.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/absl/time/clock.h"
-#include "third_party/absl/time/time.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_client_reactor.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/functional/bind_front.h"
+#include "absl/log/absl_log.h"
+#include "absl/memory/memory.h"
+#include "absl/random/distributions.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
+#include "cpp/acs_agent_client_reactor.h"
+#include "cpp/acs_agent_helper.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 

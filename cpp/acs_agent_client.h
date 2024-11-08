@@ -11,15 +11,15 @@
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
 #include "google/cloud/agentcommunication/v1/agent_communication.proto.h"
-#include "third_party/absl/base/thread_annotations.h"
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/random/random.h"
-#include "third_party/absl/status/status.h"
-#include "third_party/absl/status/statusor.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_client_reactor.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/random/random.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/synchronization/mutex.h"
+#include "cpp/acs_agent_client_reactor.h"
+#include "cpp/acs_agent_helper.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 

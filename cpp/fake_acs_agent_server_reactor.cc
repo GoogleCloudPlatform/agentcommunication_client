@@ -1,4 +1,4 @@
-#include "third_party/agentcommunication_client/cpp/fake_acs_agent_server_reactor.h"
+#include "cpp/fake_acs_agent_server_reactor.h"
 
 #include <chrono>
 #include <memory>
@@ -6,16 +6,16 @@
 #include <string>
 #include <utility>
 
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
-#include "third_party/grpc/include/grpcpp/impl/service_type.h"
-#include "third_party/grpc/include/grpcpp/security/server_credentials.h"
-#include "third_party/grpc/include/grpcpp/server_builder.h"
-#include "third_party/grpc/include/grpcpp/server_context.h"
-#include "third_party/grpc/include/grpcpp/support/server_callback.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/absl_log.h"
+#include "absl/synchronization/mutex.h"
+#include "cpp/acs_agent_helper.h"
+#include "grpc/include/grpcpp/impl/service_type.h"
+#include "grpc/include/grpcpp/security/server_credentials.h"
+#include "grpc/include/grpcpp/server_builder.h"
+#include "grpc/include/grpcpp/server_context.h"
+#include "grpc/include/grpcpp/support/server_callback.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 

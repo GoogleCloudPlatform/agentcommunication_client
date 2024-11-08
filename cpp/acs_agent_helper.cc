@@ -1,4 +1,4 @@
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
+#include "cpp/acs_agent_helper.h"
 
 #include <cstddef>
 #include <memory>
@@ -7,12 +7,12 @@
 #include <vector>
 
 #include "google/rpc/status.proto.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/status/status.h"
-#include "third_party/absl/status/statusor.h"
-#include "third_party/absl/strings/str_cat.h"
-#include "third_party/absl/strings/str_split.h"
-#include "third_party/absl/strings/string_view.h"
+#include "absl/log/absl_log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "third_party/curl/curl.h"
 #include "third_party/curl/easy.h"
 

@@ -1,9 +1,9 @@
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
+#include "cpp/acs_agent_helper.h"
 
 #include <memory>
 #include <string>
 
-#include "testing/base/public/gunit.h"
+#include "gtest/gtest.h"
 
 namespace agent_communication {
 

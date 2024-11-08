@@ -5,8 +5,8 @@
 #include <string>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.pb.h"
-#include "third_party/absl/status/statusor.h"
-#include "third_party/absl/strings/string_view.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 
 namespace agent_communication {
 

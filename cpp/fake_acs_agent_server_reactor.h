@@ -6,16 +6,16 @@
 #include <utility>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
-#include "third_party/absl/base/thread_annotations.h"
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/grpc/include/grpcpp/impl/service_type.h"
-#include "third_party/grpc/include/grpcpp/security/server_credentials.h"
-#include "third_party/grpc/include/grpcpp/server_builder.h"
-#include "third_party/grpc/include/grpcpp/server_context.h"
-#include "third_party/grpc/include/grpcpp/support/server_callback.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "absl/base/thread_annotations.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/absl_log.h"
+#include "absl/synchronization/mutex.h"
+#include "grpc/include/grpcpp/impl/service_type.h"
+#include "grpc/include/grpcpp/security/server_credentials.h"
+#include "grpc/include/grpcpp/server_builder.h"
+#include "grpc/include/grpcpp/server_context.h"
+#include "grpc/include/grpcpp/support/server_callback.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 

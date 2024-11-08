@@ -1,4 +1,4 @@
-#include "third_party/agentcommunication_client/cpp/acs_agent_client_reactor.h"
+#include "cpp/acs_agent_client_reactor.h"
 
 #include <unistd.h>
 
@@ -7,17 +7,17 @@
 #include <utility>
 
 #include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
-#include "third_party/absl/functional/any_invocable.h"
-#include "third_party/absl/log/absl_log.h"
-#include "third_party/absl/strings/str_cat.h"
-#include "third_party/absl/strings/str_format.h"
-#include "third_party/absl/strings/string_view.h"
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/agentcommunication_client/cpp/acs_agent_helper.h"
-#include "third_party/grpc/include/grpc/grpc.h"
-#include "third_party/grpc/include/grpcpp/security/credentials.h"
-#include "third_party/grpc/include/grpcpp/support/channel_arguments.h"
-#include "third_party/grpc/include/grpcpp/support/status.h"
+#include "absl/functional/any_invocable.h"
+#include "absl/log/absl_log.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
+#include "cpp/acs_agent_helper.h"
+#include "grpc/include/grpc/grpc.h"
+#include "grpc/include/grpcpp/security/credentials.h"
+#include "grpc/include/grpcpp/support/channel_arguments.h"
+#include "grpc/include/grpcpp/support/status.h"
 
 namespace agent_communication {
 
