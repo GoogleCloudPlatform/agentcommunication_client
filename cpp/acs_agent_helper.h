@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.pb.h"
+#include "agent_communication.pb.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 

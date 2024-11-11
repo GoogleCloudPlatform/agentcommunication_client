@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
+#include "agent_communication.grpc.pb.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
 #include "absl/strings/str_cat.h"
@@ -14,10 +14,10 @@
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
-#include "grpc/include/grpc/grpc.h"
-#include "grpc/include/grpcpp/security/credentials.h"
-#include "grpc/include/grpcpp/support/channel_arguments.h"
-#include "grpc/include/grpcpp/support/status.h"
+#include "grpc/grpc.h"
+#include "grpcpp/security/credentials.h"
+#include "grpcpp/support/channel_arguments.h"
+#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 

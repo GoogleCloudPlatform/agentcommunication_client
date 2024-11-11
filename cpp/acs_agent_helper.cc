@@ -13,8 +13,8 @@
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
-#include "third_party/curl/curl.h"
-#include "third_party/curl/easy.h"
+#include "curl/curl.h"
+#include "curl/easy.h"
 
 namespace agent_communication {
 

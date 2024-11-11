@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
+#include "agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/random/random.h"
@@ -18,7 +18,7 @@
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_client_reactor.h"
 #include "cpp/acs_agent_helper.h"
-#include "grpc/include/grpcpp/support/status.h"
+#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 

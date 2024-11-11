@@ -5,17 +5,17 @@
 #include <string>
 #include <utility>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
+#include "agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
 #include "absl/synchronization/mutex.h"
-#include "grpc/include/grpcpp/impl/service_type.h"
-#include "grpc/include/grpcpp/security/server_credentials.h"
-#include "grpc/include/grpcpp/server_builder.h"
-#include "grpc/include/grpcpp/server_context.h"
-#include "grpc/include/grpcpp/support/server_callback.h"
-#include "grpc/include/grpcpp/support/status.h"
+#include "grpcpp/impl/service_type.h"
+#include "grpcpp/security/server_credentials.h"
+#include "grpcpp/server_builder.h"
+#include "grpcpp/server_context.h"
+#include "grpcpp/support/server_callback.h"
+#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 

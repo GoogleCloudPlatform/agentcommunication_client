@@ -11,18 +11,18 @@
 #include <thread>
 #include <utility>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
+#include "agent_communication.grpc.pb.h"
 #include "gtest/gtest.h"
 #include "absl/log/absl_log.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "cpp/fake_acs_agent_server_reactor.h"
-#include "grpc/include/grpc/grpc.h"
-#include "grpc/include/grpcpp/channel.h"
-#include "grpc/include/grpcpp/create_channel.h"
-#include "grpc/include/grpcpp/security/credentials.h"
-#include "grpc/include/grpcpp/support/channel_arguments.h"
-#include "grpc/include/grpcpp/support/status.h"
+#include "grpc/grpc.h"
+#include "grpcpp/channel.h"
+#include "grpcpp/create_channel.h"
+#include "grpcpp/security/credentials.h"
+#include "grpcpp/support/channel_arguments.h"
+#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 namespace {

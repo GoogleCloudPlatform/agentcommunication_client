@@ -5,15 +5,15 @@
 #include <queue>
 #include <string>
 
-#include "google/cloud/agentcommunication/v1/agent_communication.grpc.pb.h"
+#include "agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
-#include "grpc/include/grpcpp/client_context.h"
-#include "grpc/include/grpcpp/support/client_callback.h"
-#include "grpc/include/grpcpp/support/status.h"
+#include "grpcpp/client_context.h"
+#include "grpcpp/support/client_callback.h"
+#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 
