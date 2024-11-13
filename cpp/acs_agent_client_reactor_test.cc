@@ -223,7 +223,7 @@ TEST_F(AcsAgentClientReactorTest, TestOnReadSuccessfully) {
 TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response response, bool ok) {});
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_VLOG(2) << "Setup done";
@@ -256,7 +256,7 @@ TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
 TEST_F(AcsAgentClientReactorTest, TestCancel) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response response, bool ok) {});
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_LOG(INFO) << "Setup done";

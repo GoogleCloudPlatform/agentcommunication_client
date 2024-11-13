@@ -29,6 +29,11 @@
 #include "grpcpp/support/channel_arguments.h"
 #include "grpcpp/support/status.h"
 
+// In external googletest, ASSERT_OK is not defined.
+#ifndef ASSERT_OK
+#define ASSERT_OK(x) ASSERT_TRUE(x.ok());
+#endif
+
 namespace agent_communication {
 namespace {
 
@@ -618,7 +623,7 @@ TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
         return CreateStub(address);
       });
   EXPECT_EQ(client_.status().code(), absl::StatusCode::kDeadlineExceeded);
-  EXPECT_THAT(client_.status().message(),
+  EXPECT_THAT(client_.status().ToString(),
               testing::HasSubstr(
                   "Timeout waiting for promise to be set for message with id"));
 }
