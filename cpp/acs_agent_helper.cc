@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "google/rpc/status.proto.h"
+#include "google/rpc/status.pb.h"
 #include "absl/log/absl_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"

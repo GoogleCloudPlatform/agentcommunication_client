@@ -1,0 +1,120 @@
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "acs_agent_helper",
+    srcs = ["acs_agent_helper.cc"],
+    hdrs = ["acs_agent_helper.h"],
+    deps = [
+        "//proto:agent_communication_cc_proto",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:string_view",
+        "@curl",
+    ],
+)
+
+cc_test(
+    name = "acs_agent_helper_test",
+    srcs = ["acs_agent_helper_test.cc"],
+    deps = [
+        ":acs_agent_helper",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "acs_agent_client_reactor",
+    srcs = ["acs_agent_client_reactor.cc"],
+    hdrs = ["acs_agent_client_reactor.h"],
+    deps = [
+        ":acs_agent_helper",
+        "//proto:agent_communication_cc_grpc",
+        "@abseil-cpp//absl/base:core_headers",
+        "@abseil-cpp//absl/functional:any_invocable",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/strings:string_view",
+        "@abseil-cpp//absl/synchronization",
+        "@com_google_grpc//:grpc++",
+    ],
+)
+
+cc_library(
+    name = "fake_acs_agent_server_reactor",
+    srcs = ["fake_acs_agent_server_reactor.cc"],
+    hdrs = ["fake_acs_agent_server_reactor.h"],
+    deps = [
+        ":acs_agent_helper",
+        "//proto:agent_communication_cc_grpc",
+        "@abseil-cpp//absl/base:core_headers",
+        "@abseil-cpp//absl/functional:any_invocable",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/synchronization",
+        "@com_google_grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "acs_agent_client_reactor_test",
+    srcs = ["acs_agent_client_reactor_test.cc"],
+    deps = [
+        ":acs_agent_client_reactor",
+        ":fake_acs_agent_server_reactor",
+        "//proto:agent_communication_cc_grpc",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/time",
+        "@com_google_grpc//:grpc++",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
+    name = "acs_agent_client",
+    srcs = ["acs_agent_client.cc"],
+    hdrs = ["acs_agent_client.h"],
+    deps = [
+        ":acs_agent_client_reactor",
+        ":acs_agent_helper",
+        "//proto:agent_communication_cc_grpc",
+        "@abseil-cpp//absl/base:core_headers",
+        "@abseil-cpp//absl/functional:any_invocable",
+        "@abseil-cpp//absl/functional:bind_front",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/memory",
+        "@abseil-cpp//absl/random",
+        "@abseil-cpp//absl/random:distributions",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/synchronization",
+        "@abseil-cpp//absl/time",
+        "@com_google_grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "acs_agent_client_test",
+    srcs = ["acs_agent_client_test.cc"],
+    deps = [
+        ":acs_agent_client",
+        ":acs_agent_helper",
+        ":fake_acs_agent_server_reactor",
+        "//proto:agent_communication_cc_grpc",
+        "@abseil-cpp//absl/base:core_headers",
+        "@abseil-cpp//absl/functional:any_invocable",
+        "@abseil-cpp//absl/log:absl_log",
+        "@abseil-cpp//absl/log:globals",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/synchronization",
+        "@abseil-cpp//absl/time",
+        "@com_google_grpc//:grpc++",
+        "@com_google_grpc//:grpc_security_base",
+        "@googletest//:gtest_main",
+    ],
+)

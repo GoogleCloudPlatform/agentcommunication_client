@@ -6,7 +6,7 @@
 #include <string>
 #include <utility>
 
-#include "agent_communication.grpc.pb.h"
+#include "proto/agent_communication.grpc.pb.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
 #include "absl/strings/str_cat.h"
