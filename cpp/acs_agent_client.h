@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "agent_communication.grpc.pb.h"
+#include "proto/agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/random/random.h"

@@ -21,7 +21,7 @@ import (
 	"math"
 
 	agentcommunicationpb "github.com/GoogleCloudPlatform/agentcommunication_client/gapic/agentcommunicationpb"
-	gax "google3/third_party/golang/github_com/gax/v/v2/v2/gax"
+	gax "google3/third_party/golang/gax_v2/v2/gax"
 	"google.golang.org/api/option/internaloption"
 	"google.golang.org/api/option"
 	gtransport "google.golang.org/api/transport/grpc"

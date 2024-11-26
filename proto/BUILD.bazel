@@ -1,0 +1,27 @@
+load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
+load("@com_google_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+proto_library(
+    name="agent_communication_proto",
+    srcs=["agent_communication.proto"],
+    deps=[
+        "@com_google_protobuf//:any_proto",
+        "@googleapis//google/api:client_proto",
+        "@googleapis//google/api:field_behavior_proto",
+        "@googleapis//google/rpc:status_proto",
+    ]
+)
+
+cc_proto_library(
+    name="agent_communication_cc_proto",
+    deps=[":agent_communication_proto"]
+)
+
+cc_grpc_library(
+    name="agent_communication_cc_grpc",
+    srcs=[":agent_communication_proto"],
+    deps=[":agent_communication_cc_proto"],
+    grpc_only = True,
+)

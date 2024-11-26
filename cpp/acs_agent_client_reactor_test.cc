@@ -11,7 +11,7 @@
 #include <thread>
 #include <utility>
 
-#include "agent_communication.grpc.pb.h"
+#include "proto/agent_communication.grpc.pb.h"
 #include "gtest/gtest.h"
 #include "absl/log/absl_log.h"
 #include "absl/time/clock.h"
