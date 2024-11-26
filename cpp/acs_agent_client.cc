@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "agent_communication.grpc.pb.h"
+#include "proto/agent_communication.grpc.pb.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/functional/bind_front.h"
 #include "absl/log/absl_log.h"

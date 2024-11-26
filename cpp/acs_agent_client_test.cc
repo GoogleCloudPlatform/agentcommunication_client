@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "agent_communication.grpc.pb.h"
+#include "proto/agent_communication.grpc.pb.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/base/thread_annotations.h"
