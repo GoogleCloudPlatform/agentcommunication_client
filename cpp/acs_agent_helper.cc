@@ -10,6 +10,7 @@
 #include "absl/log/absl_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
@@ -98,9 +99,8 @@ absl::StatusOr<std::string> CurlHttpGet(const std::string& url,
   if (res != CURLE_OK) {
     ABSL_LOG(ERROR) << "Failed to set URL: " << url;
     curl_easy_cleanup(curl);
-    return absl::InternalError(
-        absl::StrCat("Failed to set URL: ", url, " with error: ",
-                     curl_easy_strerror(res)));
+    return absl::InternalError(absl::StrCat(
+        "Failed to set URL: ", url, " with error: ", curl_easy_strerror(res)));
   }
 
   // Set header.
@@ -114,8 +114,8 @@ absl::StatusOr<std::string> CurlHttpGet(const std::string& url,
       curl_slist_free_all(headers);
     }
     return absl::InternalError(
-        absl::StrCat("Failed to set header: ", header, " with error: ",
-                     curl_easy_strerror(res)));
+        absl::StrCat("Failed to set header: ", header,
+                     " with error: ", curl_easy_strerror(res)));
   }
 
   // Set the write callback function and its data.
@@ -183,6 +183,11 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
         absl::StrCat("Wrong format of zone from metadata service: ", zone));
   }
   std::string location = regional ? zone.substr(0, last_hyphen_index) : zone;
+  std::string endpoint =
+      absl::StrContainsIgnoreCase(location, "staging")
+          ? absl::StrCat(location,
+                         "-agentcommunication.sandbox.googleapis.com:443")
+          : absl::StrCat(location, "-agentcommunication.googleapis.com:443");
 
   absl::StatusOr<std::string> instance_id = GetMetadata("instance/id");
   if (!instance_id.ok()) {
@@ -196,7 +201,8 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
   return AgentConnectionId{.token = std::move(*token),
                            .resource_id = std::move(resource_id),
                            .channel_id = std::move(channel_id),
-                           .location = std::move(location)};
+                           .endpoint = std::move(endpoint),
+                           .regional = regional};
 }
 
 }  // namespace agent_communication

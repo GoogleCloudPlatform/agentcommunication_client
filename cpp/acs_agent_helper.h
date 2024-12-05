@@ -16,7 +16,8 @@ struct AgentConnectionId {
   std::string token;
   std::string resource_id;
   std::string channel_id;
-  std::string location;
+  std::string endpoint;
+  bool regional;
 };
 // Creates an ack request for the message with the given message id.
 std::unique_ptr<

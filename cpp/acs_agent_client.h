@@ -33,6 +33,16 @@ namespace agent_communication {
 // process the response from the server during the creation of this class.
 class AcsAgentClient {
  public:
+  // Factory method to create a client. User only needs to supply the channel id
+  // and the boolean to indicate if the endpoint is regional, without needing to
+  // supply the whole connection id.
+  static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
+      bool endpoint_regional,
+      std::string channel_id,
+      absl::AnyInvocable<void(
+          google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
+          read_callback);
+
   // Factory method to create a client.
   static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
       std::unique_ptr<

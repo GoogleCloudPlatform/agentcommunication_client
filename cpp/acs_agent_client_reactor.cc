@@ -9,9 +9,7 @@
 #include "proto/agent_communication.grpc.pb.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
-#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
 #include "grpc/grpc.h"
@@ -58,7 +56,7 @@ AcsAgentClientReactor::AcsAgentClientReactor(
 }
 
 std::unique_ptr<AcsStub> AcsAgentClientReactor::CreateStub(
-    absl::string_view location) {
+    const std::string& endpoint) {
   grpc::SslCredentialsOptions options;
   grpc::ChannelArguments channel_args;
   // Keepalive settings
@@ -67,7 +65,7 @@ std::unique_ptr<AcsStub> AcsAgentClientReactor::CreateStub(
                       10 * 1000);  // 10 seconds
   return google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
       grpc::CreateCustomChannel(
-          absl::StrCat(location, "-agentcommunication.googleapis.com:443"),
+          endpoint,
           grpc::SslCredentials(options), channel_args));
 }
 

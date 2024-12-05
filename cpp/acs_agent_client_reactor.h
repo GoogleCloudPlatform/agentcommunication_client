@@ -8,7 +8,6 @@
 #include "proto/agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
-#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
 #include "grpcpp/client_context.h"
@@ -55,7 +54,7 @@ class AcsAgentClientReactor
   // Creates a stub to connect to the ACS server.
   static std::unique_ptr<
       google::cloud::agentcommunication::v1::AgentCommunication::Stub>
-  CreateStub(absl::string_view location);
+  CreateStub(const std::string& endpoint);
 
   // Adds new request to the buffer of reactor.
   // Return: boolean on whether an addition of request is successful. This will
