@@ -129,7 +129,8 @@ class AcsAgentClientTest : public ::testing::Test {
         },
         [address = server_->GetServerAddress()]() {
           return CreateStub(address);
-        });
+        },
+        []() { return AgentConnectionId(); });
     ASSERT_OK(client_);
 
     // Wait for the registration request to be acknowledged by the server, and
@@ -619,9 +620,8 @@ TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
         ABSL_VLOG(2) << "response read: "
                      << absl::StrCat(custom_client_channel_.responses.back());
       },
-      [address = server_->GetServerAddress()]() {
-        return CreateStub(address);
-      });
+      [address = server_->GetServerAddress()]() { return CreateStub(address); },
+      []() { return AgentConnectionId(); });
   EXPECT_EQ(client_.status().code(), absl::StatusCode::kDeadlineExceeded);
   EXPECT_THAT(client_.status().ToString(),
               testing::HasSubstr(

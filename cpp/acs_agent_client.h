@@ -54,7 +54,9 @@ class AcsAgentClient {
           read_callback,
       absl::AnyInvocable<std::unique_ptr<
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
-          stub_generator);
+          stub_generator,
+      absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
+          connection_id_generator);
 
   // Sends a StreamAgentMessagesRequest to the server.
   // It will automatically retry if the request was not acknowledged by the
@@ -99,9 +101,12 @@ class AcsAgentClient {
           read_callback,
       absl::AnyInvocable<std::unique_ptr<
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
-          stub_generator)
+          stub_generator,
+      absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
+          connection_id_generator)
       : connection_id_(std::move(connection_id)),
         stub_generator_(std::move(stub_generator)),
+        connection_id_generator_(std::move(connection_id_generator)),
         read_callback_(std::move(read_callback)) {}
 
   // Initializes the client by registering the connection.
@@ -210,6 +215,12 @@ class AcsAgentClient {
   absl::AnyInvocable<std::unique_ptr<
       google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
       stub_generator_ = nullptr;
+
+  // Generates a new connection id when the client needs to restart the client.
+  // We have a default implementation, this function pointer allows us to pass
+  // in a custom implementation for testing purposes and other use cases.
+  absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
+      connection_id_generator_ = nullptr;
 
   // Reactor to handle the gRPC communication with the server.
   std::unique_ptr<AcsAgentClientReactor> reactor_ ABSL_GUARDED_BY(reactor_mtx_);

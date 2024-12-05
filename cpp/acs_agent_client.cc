@@ -58,8 +58,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
   std::unique_ptr<AcsStub> stub =
       AcsAgentClientReactor::CreateStub(agent_connection_id->endpoint);
   return Create(std::move(stub), *std::move(agent_connection_id),
-                std::move(read_callback),
-                nullptr);
+                std::move(read_callback), nullptr, nullptr);
 }
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
@@ -70,11 +69,13 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     absl::AnyInvocable<void(
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
         read_callback,
-    absl::AnyInvocable<std::unique_ptr<AcsStub>()> stub_generator) {
+    absl::AnyInvocable<std::unique_ptr<AcsStub>()> stub_generator,
+    absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
+        connection_id_generator) {
   // Create the client.
-  std::unique_ptr<AcsAgentClient> client = absl::WrapUnique(
-      new AcsAgentClient(agent_connection_id, std::move(read_callback),
-                         std::move(stub_generator)));
+  std::unique_ptr<AcsAgentClient> client = absl::WrapUnique(new AcsAgentClient(
+      agent_connection_id, std::move(read_callback), std::move(stub_generator),
+      std::move(connection_id_generator)));
 
   // Start the read message thread.
   std::thread read_message_body_thread(
@@ -428,18 +429,20 @@ void AcsAgentClient::RestartClient() {
 }
 
 std::unique_ptr<AcsStub> AcsAgentClient::GenerateConnectionIdAndStub() {
-  if (stub_generator_ != nullptr) {
-    return stub_generator_();
-  }
   absl::StatusOr<AgentConnectionId> new_connection_id =
-      agent_communication::GenerateAgentConnectionId(connection_id_.channel_id,
-                                                     connection_id_.regional);
+      connection_id_generator_ != nullptr
+          ? connection_id_generator_()
+          : GenerateAgentConnectionId(connection_id_.channel_id,
+                                      connection_id_.regional);
   if (!new_connection_id.ok()) {
     ABSL_LOG(WARNING) << "Failed to get connection id from agent connection "
                       << "name: " << connection_id_.channel_id;
     return nullptr;
   }
   connection_id_ = *std::move(new_connection_id);
+  if (stub_generator_ != nullptr) {
+    return stub_generator_();
+  }
   return AcsAgentClientReactor::CreateStub(connection_id_.endpoint);
 }
 
