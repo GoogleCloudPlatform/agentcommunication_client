@@ -302,7 +302,7 @@ void AcsAgentClient::ClientReadMessage() {
 
 void AcsAgentClient::ReactorReadCallback(Response response, bool ok) {
   if (!ok) {
-    ABSL_LOG(WARNING) << "ReactorReadCallback not ok";
+    ABSL_VLOG(1) << "ReactorReadCallback not ok";
     // Wakes up RestartReactor() to restart the stream.
     absl::MutexLock lock(&reactor_mtx_);
     stream_state_ = ClientState::kStreamTemporarilyDown;
@@ -395,7 +395,7 @@ void AcsAgentClient::RestartClient() {
     // retry logic with backoff mechanism.
     if (reactor_ != nullptr) {
       grpc::Status status = reactor_->Await();
-      ABSL_LOG(INFO) << absl::StrFormat(
+      ABSL_VLOG(1) << absl::StrFormat(
           "RestartReactor thread trying to restart the stream with previous "
           "termination status code: %d and message: %s and details: %s",
           status.error_code(), status.error_message(), status.error_details());
