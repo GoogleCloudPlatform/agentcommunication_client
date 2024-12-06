@@ -151,7 +151,7 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
   if (!token.ok()) {
     return token.status();
   }
-  ABSL_LOG(INFO) << "Successfully got token from metadata service: " << *token;
+  ABSL_VLOG(2) << "Successfully got token from metadata service: " << *token;
 
   absl::StatusOr<std::string> numeric_project_id_zone =
       GetMetadata("instance/zone");
@@ -168,7 +168,7 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
         "Wrong format of numeric_project_id_zone from metadata service: ",
         *numeric_project_id_zone));
   }
-  ABSL_LOG(INFO)
+  ABSL_VLOG(2)
       << "Successfully got numeric_project_id_zone from metadata service: "
       << *numeric_project_id_zone;
   const std::string& zone = numeric_project_id_zone_vector[3];
@@ -193,7 +193,7 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
   if (!instance_id.ok()) {
     return instance_id.status();
   }
-  ABSL_LOG(INFO) << "Successfully got instance_id from metadata service: "
+  ABSL_VLOG(2) << "Successfully got instance_id from metadata service: "
                  << *instance_id;
 
   std::string resource_id =
