@@ -120,19 +120,21 @@ absl::Status AcsAgentClient::AddRequest(Request& request) {
       // the reactor.
       ABSL_VLOG(2) << absl::StrFormat(
           "Failed to add message with id: %s to reactor as the ongoing write "
-          "takes. Immediately retrying without sleeping.",
+          "takes. Retrying with a sleep delay.",
           request.message_id());
+      absl::SleepFor(absl::Seconds(1));
       continue;
     }
     if (latest_send_request_status.code() ==
         absl::StatusCode::kDeadlineExceeded) {
-      // Retry to send the request because the wait for the response timed out.
+      // Give up retrying to send the request because the wait for the response
+      // timed out. This generally means the server is not responding, and the
+      // client should re-create the connection.
       ABSL_VLOG(1) << absl::StrFormat(
           "Successfully added message with id: %s to reactor, but timed out "
-          "waiting for response from server. Immediately retrying without "
-          "sleeping.",
+          "waiting for response from server. Please re-create the connection.",
           request.message_id());
-      continue;
+      break;
     }
     if (latest_send_request_status.code() ==
         absl::StatusCode::kResourceExhausted) {
@@ -141,7 +143,7 @@ absl::Status AcsAgentClient::AddRequest(Request& request) {
           "Successfully added message with id: %s to reactor, but get a "
           "resource exhausted error. Retrying with a sleep delay.",
           request.message_id());
-      int delayMillis = std::min(100 * (1 << i), 2000);
+      int delayMillis = std::min(250 * (i + 1), 1000);
       absl::SleepFor(absl::Milliseconds(delayMillis));
       continue;
     }

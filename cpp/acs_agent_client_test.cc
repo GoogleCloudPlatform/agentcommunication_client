@@ -253,29 +253,27 @@ TEST_F(AcsAgentClientTest, TestSendMessageTimeout) {
   ASSERT_TRUE(WaitUntil(
       [this]() {
         absl::MutexLock lock(&custom_client_channel_.mtx);
-        return custom_client_channel_.responses.size() == 5;
+        return custom_client_channel_.responses.size() == 1;
       },
       absl::Seconds(10), absl::Seconds(1)));
 
-  // Verify that client receive 5 responses from the server and verify that
-  // server receives 5 requests from the client with the same content because
-  // the client will retry to send the request 5 times.
+  // Verify that client receive 1 response from the server and verify that
+  // server receives 1 request from the client with the same content because
+  // the client will not retry.
   {
     absl::MutexLock lock1(&custom_client_channel_.mtx);
     absl::MutexLock lock2(&custom_server_channel_.mtx);
-    ASSERT_EQ(custom_server_channel_.requests.size(), 5);
-    for (int i = 0; i < 5; ++i) {
-      EXPECT_EQ(custom_client_channel_.responses[i].message_id(),
-                custom_server_channel_.requests[i].message_id());
-      EXPECT_EQ(custom_client_channel_.responses[i]
+    ASSERT_EQ(custom_server_channel_.requests.size(), 1);
+      EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
+                custom_server_channel_.requests[0].message_id());
+      EXPECT_EQ(custom_client_channel_.responses[0]
                     .message_response()
                     .status()
                     .code(),
                 0);
       EXPECT_EQ(
-          custom_server_channel_.requests[i].message_body().body().value(),
+          custom_server_channel_.requests[0].message_body().body().value(),
           "hello_world");
-    }
     custom_client_channel_.responses.clear();
     custom_server_channel_.requests.clear();
   }
