@@ -53,6 +53,8 @@ var (
 	// ErrResourceExhausted is an error indicating that the server responded to the send with
 	// ResourceExhausted.
 	ErrResourceExhausted = errors.New("resource exhausted")
+	// ErrGettingInstanceToken is an error indicating that the instance token could not be retrieved.
+	ErrGettingInstanceToken = errors.New("error getting instance token")
 
 	logger *log.Logger
 )
@@ -323,7 +325,7 @@ func (c *Connection) createStream(ctx context.Context) error {
 	loggerPrintf("Creating stream.")
 	token, err := cm.Get("instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full")
 	if err != nil {
-		return fmt.Errorf("error getting instance token: %v", err)
+		return fmt.Errorf("%w: %v", ErrGettingInstanceToken, err)
 	}
 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
