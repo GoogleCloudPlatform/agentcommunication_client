@@ -238,6 +238,7 @@ func (c *Connection) send(streamClosed chan struct{}) {
 func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 	loggerPrintf("Receiving messages")
 	var unavailableRetries int
+	var resourceExhaustedRetries int
 	for {
 		resp, err := c.stream.Recv()
 		if err != nil {
@@ -254,7 +255,13 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 			st, ok := status.FromError(err)
 			if ok && st.Code() == codes.ResourceExhausted {
 				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", err)
-				time.Sleep(1000 * time.Millisecond)
+				if resourceExhaustedRetries > 9 {
+					// Max sleep of 10s.
+					time.Sleep(10 * time.Second)
+				} else {
+					time.Sleep(time.Duration(resourceExhaustedRetries+1) * time.Second)
+				}
+				resourceExhaustedRetries++
 			} else if ok && st.Code() == codes.Unavailable {
 				// Retry max 5 times (2s total).
 				if unavailableRetries > 5 {
@@ -280,8 +287,9 @@ func (c *Connection) recv(ctx context.Context, streamClosed chan struct{}) {
 			}
 			return
 		}
-		// Reset unavailable retries.
+		// Reset retries.
 		unavailableRetries = 0
+		resourceExhaustedRetries = 0
 		switch resp.GetType().(type) {
 		case *acpb.StreamAgentMessagesResponse_MessageBody:
 			// Acknowledge message first, if this ack fails dont forward the message on to the handling
