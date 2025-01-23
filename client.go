@@ -432,6 +432,7 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 	}
 
 	if err := conn.createStream(ctx); err != nil {
+		conn.close(err)
 		return nil, err
 	}
 
