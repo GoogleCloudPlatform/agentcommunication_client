@@ -33,9 +33,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/testing/protocmp"
 
@@ -87,14 +89,15 @@ type testSrv struct {
 }
 
 func newTestSrv() *testSrv {
-	return &testSrv{}
+	return &testSrv{
+		recvErr: make(chan error, 1),
+	}
 }
 
 func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgentMessagesServer) error {
 	s.Lock()
 	defer s.Unlock()
 	s.send = make(chan *acpb.StreamAgentMessagesResponse)
-	s.recvErr = make(chan error)
 	closed := make(chan struct{})
 	defer close(closed)
 
@@ -197,6 +200,87 @@ func TestCreateConnection(t *testing.T) {
 	}
 }
 
+func TestCreateConnectionErrors(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		expectError bool
+	}{
+		{
+			name:        "ResourceExhausted",
+			err:         status.Error(codes.ResourceExhausted, ""),
+			expectError: false,
+		},
+		{
+			name:        "Unavailable",
+			err:         status.Error(codes.Unavailable, ""),
+			expectError: false,
+		},
+		{
+			name:        "Internal",
+			err:         status.Error(codes.Internal, ""),
+			expectError: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			lis := bufconn.Listen(bufSize)
+			s := grpc.NewServer()
+			srv := newTestSrv()
+			srv.recvErr <- tc.err
+			acpb.RegisterAgentCommunicationServer(s, srv)
+
+			go func() {
+				if err := s.Serve(lis); err != nil {
+					log.Fatalf("Server exited with error: %v", err)
+				}
+			}()
+
+			var bufDialer = func(context.Context, string) (net.Conn, error) {
+				return lis.Dial()
+			}
+
+			cc, err := grpc.DialContext(ctx, "bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = CreateConnection(context.Background(), testChannelID, false, option.WithGRPCConn(cc))
+			if err != nil {
+				if tc.expectError {
+					return
+				}
+				t.Fatalf("CreateConnection() failed: %v", err)
+			}
+			if tc.expectError {
+				t.Fatalf("CreateConnection() expected to fail")
+			}
+
+			if len(srv.req) != 1 {
+				t.Fatalf("srv.req = %v, want 1", len(srv.req))
+			}
+
+			wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_RegisterConnection{RegisterConnection: &acpb.RegisterConnection{ChannelId: testChannelID, ResourceId: testResourceID}}}
+			if diff := cmp.Diff(srv.req[0], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
+				t.Errorf("srv.req[0] diff (-want +got):\n%s", diff)
+			}
+
+			wantHeaders := map[string][]string{
+				"authentication":                  []string{"Bearer test-token"},
+				"agent-communication-channel-id":  []string{"test-channel"},
+				"agent-communication-resource-id": []string{"projects/test-project/zones/test-zone/instances/test-instance"},
+			}
+			for k, v := range wantHeaders {
+				if !reflect.DeepEqual(srv.headers.Get(k), v) {
+					t.Errorf("srv.headers[%s] = %v, want %v", k, srv.headers[k], v)
+				}
+			}
+		})
+	}
+}
+
 func TestSendMessage(t *testing.T) {
 	srv, conn, err := createTestConnection(context.Background())
 	if err != nil {
@@ -219,60 +303,106 @@ func TestSendMessage(t *testing.T) {
 }
 
 func TestSendMessage_ClosedConnection(t *testing.T) {
-	srv, conn, err := createTestConnection(context.Background())
-	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+	tests := []struct {
+		name        string
+		err         error
+		expectError bool
+	}{
+		{
+			name:        "EOF",
+			err:         nil,
+			expectError: false,
+		},
+		{
+			name:        "Canceled",
+			err:         status.Error(codes.Canceled, ""),
+			expectError: false,
+		},
+		{
+			name:        "DeadlineExceeded",
+			err:         status.Error(codes.DeadlineExceeded, ""),
+			expectError: false,
+		},
+		{
+			name:        "ResourceExhausted",
+			err:         status.Error(codes.ResourceExhausted, ""),
+			expectError: false,
+		},
+		{
+			name:        "Unavailable",
+			err:         status.Error(codes.Unavailable, ""),
+			expectError: false,
+		},
+		{
+			name:        "Internal",
+			err:         status.Error(codes.Internal, ""),
+			expectError: true,
+		},
 	}
-	conn.timeToWaitForResp = 100 * time.Millisecond
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, conn, err := createTestConnection(context.Background())
+			if err != nil {
+				t.Fatalf("CreateConnection() failed: %v", err)
+			}
+			conn.timeToWaitForResp = 100 * time.Millisecond
 
-	// Lock the recv loop.
-	srv.send <- &acpb.StreamAgentMessagesResponse{Type: &acpb.StreamAgentMessagesResponse_MessageBody{}}
-	time.Sleep(5 * time.Millisecond)
-	// Close the connection server side, client should not autoreconnect because it is blocked on recv.
-	srv.recvErr <- nil
+			// Lock the recv loop.
+			srv.send <- &acpb.StreamAgentMessagesResponse{Type: &acpb.StreamAgentMessagesResponse_MessageBody{}}
+			time.Sleep(5 * time.Millisecond)
+			// Close the connection server side, client should not autoreconnect because it is blocked on recv.
+			srv.recvErr <- tc.err
 
-	// Should wait for reconnect.
-	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
-	var sendErr = make(chan error)
-	go func() {
-		sendErr <- conn.SendMessage(msg)
-	}()
-	// Give goroutine enough time to start
-	time.Sleep(5 * time.Millisecond)
+			// Should wait for reconnect.
+			msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+			var sendErr = make(chan error)
+			go func() {
+				sendErr <- conn.SendMessage(msg)
+			}()
+			// Give goroutine enough time to start
+			time.Sleep(5 * time.Millisecond)
 
-	// Should only have 2 messages, register and the ack.
-	srv.reqMx.Lock()
-	if len(srv.req) != 2 {
-		t.Fatalf("srv.req = %v, want 2", len(srv.req))
-	}
-	srv.req = nil
-	srv.reqMx.Unlock()
+			// Should only have 2 messages, register and the ack.
+			srv.reqMx.Lock()
+			if len(srv.req) != 2 {
+				t.Fatalf("srv.req = %v, want 2", len(srv.req))
+			}
+			srv.req = nil
+			srv.reqMx.Unlock()
 
-	// Unblock recv
-	if _, err := conn.Receive(); err != nil {
-		t.Fatalf("Receive() failed: %v", err)
-	}
+			// Unblock recv
+			if _, err := conn.Receive(); err != nil {
+				t.Fatalf("Receive() failed: %v", err)
+			}
 
-	// Wait for resend.
-	timer := time.NewTimer(500 * time.Millisecond)
-	select {
-	case err := <-sendErr:
-		if err != nil {
-			t.Fatalf("SendMessage() failed: %v", err)
-		}
-	case <-timer.C:
-		t.Errorf("SendMessage() timed out")
-	}
+			// Wait for resend.
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case err := <-sendErr:
+				if err != nil && !tc.expectError {
+					t.Fatalf("SendMessage() failed: %v", err)
+				}
+				if tc.expectError {
+					if err == nil {
+						t.Fatalf("SendMessage() expected to fail")
+					}
+					return
+				}
+			case <-timer.C:
+				t.Errorf("SendMessage() timed out")
+			}
 
-	// Should have 2 more messages now, register and the send.
-	srv.reqMx.Lock()
-	defer srv.reqMx.Unlock()
-	if len(srv.req) != 2 {
-		t.Fatalf("srv.req = %v, want 2", len(srv.req))
-	}
-	wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg}}
-	if diff := cmp.Diff(srv.req[1], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
-		t.Errorf("srv.req[1] diff (-want +got):\n%s", diff)
+			// Should have 2 more messages now, register and the send.
+			srv.reqMx.Lock()
+			defer srv.reqMx.Unlock()
+			if len(srv.req) != 2 {
+				t.Fatalf("srv.req = %v, want 2", len(srv.req))
+			}
+			wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg}}
+			if diff := cmp.Diff(srv.req[1], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
+				t.Errorf("srv.req[1] diff (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
 
