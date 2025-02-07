@@ -81,16 +81,18 @@ func TestMain(m *testing.M) {
 type testSrv struct {
 	sync.Mutex
 
-	req     []*acpb.StreamAgentMessagesRequest
-	reqMx   sync.Mutex
-	headers metadata.MD
-	send    chan *acpb.StreamAgentMessagesResponse
-	recvErr chan error
+	req        []*acpb.StreamAgentMessagesRequest
+	reqMx      sync.Mutex
+	headers    metadata.MD
+	send       chan *acpb.StreamAgentMessagesResponse
+	recvErr    chan error
+	grpcServer *grpc.Server
 }
 
-func newTestSrv() *testSrv {
+func newTestSrv(grpcServer *grpc.Server) *testSrv {
 	return &testSrv{
-		recvErr: make(chan error, 1),
+		recvErr:    make(chan error, 1),
+		grpcServer: grpcServer,
 	}
 }
 
@@ -151,7 +153,7 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 func createTestConnection(ctx context.Context) (*testSrv, *Connection, error) {
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
-	srv := newTestSrv()
+	srv := newTestSrv(s)
 	acpb.RegisterAgentCommunicationServer(s, srv)
 
 	go func() {
@@ -174,10 +176,12 @@ func createTestConnection(ctx context.Context) (*testSrv, *Connection, error) {
 }
 
 func TestCreateConnection(t *testing.T) {
-	srv, _, err := createTestConnection(context.Background())
+	srv, conn, err := createTestConnection(context.Background())
 	if err != nil {
 		t.Fatalf("CreateConnection() failed: %v", err)
 	}
+	defer srv.grpcServer.Stop()
+	defer conn.Close()
 
 	if len(srv.req) != 1 {
 		t.Fatalf("srv.req = %v, want 1", len(srv.req))
@@ -228,7 +232,8 @@ func TestCreateConnectionErrors(t *testing.T) {
 
 			lis := bufconn.Listen(bufSize)
 			s := grpc.NewServer()
-			srv := newTestSrv()
+			defer s.Stop()
+			srv := newTestSrv(s)
 			srv.recvErr <- tc.err
 			acpb.RegisterAgentCommunicationServer(s, srv)
 
@@ -247,13 +252,14 @@ func TestCreateConnectionErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err = CreateConnection(context.Background(), testChannelID, false, option.WithGRPCConn(cc))
+			conn, err := CreateConnection(context.Background(), testChannelID, false, option.WithGRPCConn(cc))
 			if err != nil {
 				if tc.expectError {
 					return
 				}
 				t.Fatalf("CreateConnection() failed: %v", err)
 			}
+			defer conn.Close()
 			if tc.expectError {
 				t.Fatalf("CreateConnection() expected to fail")
 			}
@@ -286,6 +292,8 @@ func TestSendMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConnection() failed: %v", err)
 	}
+	defer srv.grpcServer.Stop()
+	defer conn.Close()
 
 	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
 	if err := conn.SendMessage(msg); err != nil {
@@ -345,6 +353,8 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CreateConnection() failed: %v", err)
 			}
+			defer srv.grpcServer.Stop()
+			defer conn.Close()
 			conn.timeToWaitForResp = 100 * time.Millisecond
 
 			// Lock the recv loop.
@@ -411,7 +421,7 @@ func TestClose(t *testing.T) {
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
 	defer s.Stop()
-	srv := newTestSrv()
+	srv := newTestSrv(s)
 	acpb.RegisterAgentCommunicationServer(s, srv)
 
 	go func() {
@@ -457,6 +467,7 @@ func TestClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConnection() failed: %v", err)
 	}
+	defer conn.Close()
 
 	// Closing server stream, connection should auto reconnect.
 	srv.recvErr <- nil
@@ -473,6 +484,8 @@ func TestReceive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConnection() failed: %v", err)
 	}
+	defer srv.grpcServer.Stop()
+	defer conn.Close()
 	body := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
 	srv.send <- &acpb.StreamAgentMessagesResponse{MessageId: "test-message-id", Type: &acpb.StreamAgentMessagesResponse_MessageBody{MessageBody: body}}
 

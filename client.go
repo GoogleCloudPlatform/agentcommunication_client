@@ -64,8 +64,9 @@ type Connection struct {
 	client *agentcommunication.Client
 	stream acpb.AgentCommunication_StreamAgentMessagesClient
 	// Indicates that the entire connection is closed and will not reopen.
-	closed   chan struct{}
-	closeErr error
+	closed     chan struct{}
+	closeErr   error
+	closeErrMx sync.RWMutex
 	// Indicates that the underlying stream is ready to send.
 	streamReady chan struct{}
 	sends       chan *acpb.StreamAgentMessagesRequest
@@ -91,6 +92,18 @@ func (c *Connection) Close() {
 	c.close(ErrConnectionClosed)
 }
 
+func (c *Connection) setCloseErr(err error) {
+	c.closeErrMx.Lock()
+	defer c.closeErrMx.Unlock()
+	c.closeErr = err
+}
+
+func (c *Connection) getCloseErr() error {
+	c.closeErrMx.RLock()
+	defer c.closeErrMx.RUnlock()
+	return c.closeErr
+}
+
 func (c *Connection) close(err error) {
 	loggerPrintf("closing connection with err: %v", err)
 	st, _ := status.FromError(err)
@@ -100,7 +113,7 @@ func (c *Connection) close(err error) {
 		return
 	default:
 		close(c.closed)
-		c.closeErr = err
+		c.setCloseErr(err)
 		c.client.Close()
 	}
 }
@@ -128,7 +141,7 @@ func (c *Connection) waitForResponse(key string, channel chan *status.Status) er
 	case <-timer.C:
 		return fmt.Errorf("%w: timed out waiting for response, MessageID: %q", ErrMessageTimeout, key)
 	case <-c.closed:
-		return fmt.Errorf("connection closed with err: %w", c.closeErr)
+		return fmt.Errorf("connection closed with err: %w", c.getCloseErr())
 	}
 	return nil
 }
@@ -138,7 +151,7 @@ func (c *Connection) sendWithResp(req *acpb.StreamAgentMessagesRequest, channel 
 
 	select {
 	case <-c.closed:
-		return fmt.Errorf("connection closed with err: %w", c.closeErr)
+		return fmt.Errorf("connection closed with err: %w", c.getCloseErr())
 	case c.sends <- req:
 	}
 
@@ -158,7 +171,7 @@ func (c *Connection) sendMessage(msg *acpb.MessageBody) error {
 
 	select {
 	case <-c.closed:
-		return fmt.Errorf("connection closed with err: %w", c.closeErr)
+		return fmt.Errorf("connection closed with err: %w", c.getCloseErr())
 	case c.streamReady <- struct{}{}: // Only sends if the stream is ready to send.
 	}
 
@@ -195,11 +208,16 @@ func (c *Connection) Receive() (*acpb.MessageBody, error) {
 	case msg := <-c.messages:
 		return msg, nil
 	case <-c.closed:
-		return nil, fmt.Errorf("connection closed with err: %w", c.closeErr)
+		return nil, fmt.Errorf("connection closed with err: %w", c.getCloseErr())
 	}
 }
 
 func (c *Connection) streamSend(req *acpb.StreamAgentMessagesRequest, streamClosed chan struct{}) error {
+	select {
+	case <-streamClosed:
+		return errors.New("stream closed")
+	default:
+	}
 	if err := c.stream.Send(req); err != nil {
 		if err != io.EOF && !errors.Is(err, io.EOF) {
 			// Something is very broken, just close the stream here.
@@ -231,7 +249,6 @@ func (c *Connection) send(streamClosed chan struct{}) {
 				return
 			}
 		case <-c.closed:
-			c.stream.CloseSend()
 			return
 		case <-streamClosed:
 			return
