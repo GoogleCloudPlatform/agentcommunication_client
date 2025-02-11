@@ -150,6 +150,10 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 	}
 }
 
+func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessageRequest) (*acpb.SendAgentMessageResponse, error) {
+	return &acpb.SendAgentMessageResponse{MessageBody: req.GetMessageBody()}, nil
+}
+
 func createTestConnection(ctx context.Context) (*testSrv, *Connection, error) {
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()

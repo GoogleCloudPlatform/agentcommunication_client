@@ -1,4 +1,4 @@
-// Copyright 2023 Google LLC
+// Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,6 +18,7 @@ package agentcommunication
 
 import (
 	"context"
+	"log/slog"
 	"math"
 
 	agentcommunicationpb "github.com/GoogleCloudPlatform/agentcommunication_client/gapic/agentcommunicationpb"
@@ -33,15 +34,19 @@ var newClientHook clientHook
 // CallOptions contains the retry settings for each method of Client.
 type CallOptions struct {
 	StreamAgentMessages []gax.CallOption
+	SendAgentMessage    []gax.CallOption
 }
 
 func defaultGRPCClientOptions() []option.ClientOption {
 	return []option.ClientOption{
 		internaloption.WithDefaultEndpoint("agentcommunication.googleapis.com:443"),
+		internaloption.WithDefaultEndpointTemplate("agentcommunication.UNIVERSE_DOMAIN:443"),
 		internaloption.WithDefaultMTLSEndpoint("agentcommunication.mtls.googleapis.com:443"),
+		internaloption.WithDefaultUniverseDomain("googleapis.com"),
 		internaloption.WithDefaultAudience("https://agentcommunication.googleapis.com/"),
 		internaloption.WithDefaultScopes(DefaultAuthScopes()...),
 		internaloption.EnableJwtWithScope(),
+		internaloption.EnableNewAuthLibrary(),
 		option.WithGRPCDialOption(grpc.WithDefaultCallOptions(
 			grpc.MaxCallRecvMsgSize(math.MaxInt32))),
 	}
@@ -50,6 +55,7 @@ func defaultGRPCClientOptions() []option.ClientOption {
 func defaultCallOptions() *CallOptions {
 	return &CallOptions{
 		StreamAgentMessages: []gax.CallOption{},
+		SendAgentMessage:    []gax.CallOption{},
 	}
 }
 
@@ -59,6 +65,7 @@ type internalClient interface {
 	setGoogleClientInfo(...string)
 	Connection() *grpc.ClientConn
 	StreamAgentMessages(context.Context, ...gax.CallOption) (agentcommunicationpb.AgentCommunication_StreamAgentMessagesClient, error)
+	SendAgentMessage(context.Context, *agentcommunicationpb.SendAgentMessageRequest, ...gax.CallOption) (*agentcommunicationpb.SendAgentMessageResponse, error)
 }
 
 // Client is a client for interacting with Agent Communication API.
@@ -101,6 +108,13 @@ func (c *Client) StreamAgentMessages(ctx context.Context, opts ...gax.CallOption
 	return c.internalClient.StreamAgentMessages(ctx, opts...)
 }
 
+// SendAgentMessage send a message to a client. This is equivalent to sending a message via
+// StreamAgentMessages with a single message and waiting for the response.
+// Channel ID and Resource ID are required to be sent in the header.
+func (c *Client) SendAgentMessage(ctx context.Context, req *agentcommunicationpb.SendAgentMessageRequest, opts ...gax.CallOption) (*agentcommunicationpb.SendAgentMessageResponse, error) {
+	return c.internalClient.SendAgentMessage(ctx, req, opts...)
+}
+
 // gRPCClient is a client for interacting with Agent Communication API over gRPC transport.
 //
 // Methods, except Close, may be called concurrently. However, fields must not be modified concurrently with method calls.
@@ -116,6 +130,8 @@ type gRPCClient struct {
 
 	// The x-goog-* metadata to be sent with each request.
 	xGoogHeaders []string
+
+	logger *slog.Logger
 }
 
 // NewClient creates a new agent communication client based on gRPC.
@@ -142,6 +158,7 @@ func NewClient(ctx context.Context, opts ...option.ClientOption) (*Client, error
 		connPool:    connPool,
 		client:      agentcommunicationpb.NewAgentCommunicationClient(connPool),
 		CallOptions: &client.CallOptions,
+		logger:      internaloption.GetLogger(opts),
 	}
 	c.setGoogleClientInfo()
 
@@ -164,7 +181,9 @@ func (c *gRPCClient) Connection() *grpc.ClientConn {
 func (c *gRPCClient) setGoogleClientInfo(keyval ...string) {
 	kv := append([]string{"gl-go", gax.GoVersion}, keyval...)
 	kv = append(kv, "gapic", getVersionClient(), "gax", gax.Version, "grpc", grpc.Version)
-	c.xGoogHeaders = []string{"x-goog-api-client", gax.XGoogHeader(kv...)}
+	c.xGoogHeaders = []string{
+		"x-goog-api-client", gax.XGoogHeader(kv...),
+	}
 }
 
 // Close closes the connection to the API service. The user should invoke this when
@@ -179,7 +198,24 @@ func (c *gRPCClient) StreamAgentMessages(ctx context.Context, opts ...gax.CallOp
 	opts = append((*c.CallOptions).StreamAgentMessages[0:len((*c.CallOptions).StreamAgentMessages):len((*c.CallOptions).StreamAgentMessages)], opts...)
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
+		c.logger.DebugContext(ctx, "api streaming client request", "serviceName", serviceName, "rpcName", "StreamAgentMessages")
 		resp, err = c.client.StreamAgentMessages(ctx, settings.GRPC...)
+		c.logger.DebugContext(ctx, "api streaming client response", "serviceName", serviceName, "rpcName", "StreamAgentMessages")
+		return err
+	}, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *gRPCClient) SendAgentMessage(ctx context.Context, req *agentcommunicationpb.SendAgentMessageRequest, opts ...gax.CallOption) (*agentcommunicationpb.SendAgentMessageResponse, error) {
+	ctx = gax.InsertMetadataIntoOutgoingContext(ctx, c.xGoogHeaders...)
+	opts = append((*c.CallOptions).SendAgentMessage[0:len((*c.CallOptions).SendAgentMessage):len((*c.CallOptions).SendAgentMessage)], opts...)
+	var resp *agentcommunicationpb.SendAgentMessageResponse
+	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
+		var err error
+		resp, err = executeRPC(ctx, c.client.SendAgentMessage, req, settings.GRPC, c.logger, "SendAgentMessage")
 		return err
 	}, opts...)
 	if err != nil {

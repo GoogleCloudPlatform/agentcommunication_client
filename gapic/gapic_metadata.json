@@ -1,0 +1,28 @@
+{
+  "schema": "1.0",
+  "comment": "This file maps proto services/RPCs to the corresponding library clients/methods.",
+  "language": "go",
+  "protoPackage": "google.cloud.agentcommunication.v1",
+  "libraryPackage": "cloud.google.com/go/agentcommunication/apiv1",
+  "services": {
+    "AgentCommunication": {
+      "clients": {
+        "grpc": {
+          "libraryClient": "Client",
+          "rpcs": {
+            "SendAgentMessage": {
+              "methods": [
+                "SendAgentMessage"
+              ]
+            },
+            "StreamAgentMessages": {
+              "methods": [
+                "StreamAgentMessages"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

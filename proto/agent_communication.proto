@@ -1,4 +1,4 @@
-// Copyright 2023 Google LLC
+// Copyright 2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -36,6 +36,38 @@ service AgentCommunication {
   // Bi-di streaming between the server and resource on a communication channel.
   rpc StreamAgentMessages(stream StreamAgentMessagesRequest)
       returns (stream StreamAgentMessagesResponse) {}
+
+  // Send a message to a client. This is equivalent to sending a message via
+  // StreamAgentMessages with a single message and waiting for the response.
+  // Channel ID and Resource ID are required to be sent in the header.
+  rpc SendAgentMessage(SendAgentMessageRequest)
+      returns (SendAgentMessageResponse) {}
+}
+
+// Sends an AgentMessage.
+message SendAgentMessageRequest {
+  // Required. ID of the channel for the connection.
+  // The channel ID must:
+  //  - Be 1-63 characters in length.
+  //  - Match the regular expression ^[a-z]([-a-z0-9]*[a-z0-9])?$. This means
+  //  that the first character must be a lowercase letter, and all the following
+  //  characters must be hyphens, lowercase letters, or digits, except the last
+  //  character, which cannot be a hyphen.
+  string channel_id = 1 [(google.api.field_behavior) = REQUIRED];
+
+  // Required. ID of the resource for the connection.
+  // This must only contain UTF-8 encoded characters and be 1-255 characters in
+  // length.
+  string resource_id = 2 [(google.api.field_behavior) = REQUIRED];
+
+  // Required. The message to be sent.
+  MessageBody message_body = 3 [(google.api.field_behavior) = REQUIRED];
+}
+
+// Response to a sent message.
+message SendAgentMessageResponse {
+  // The message response, if any.
+  MessageBody message_body = 1;
 }
 
 // Registers this connection.
@@ -60,21 +92,21 @@ message RegisterConnection {
 
 // Response to a sent message.
 message MessageResponse {
-  // Status for this message response, for non OK status ErrorInfo.reason will
-  // be one of StreamAgentMessagesResponse.ErrorReason.
+  // Output only. Status for this message response, for non OK status
+  // ErrorInfo.reason will be one of StreamAgentMessagesResponse.ErrorReason.
   // Expected agent responses:
   // OK - message was successfully received.
   // Expected service responses:
   // OK - message was successfully received.
   // RESOURCE_EXHAUSTED - this connection is rate limited, message delivery
   // should be slowed.
-  google.rpc.Status status = 1;
+  google.rpc.Status status = 1 [(google.api.field_behavior) = OUTPUT_ONLY];
 }
 
 // The message to be delivered.
 message MessageBody {
-  // Labels to use for this message for easy lookup and client side filtering.
-  // Labels must meet the following constraints:
+  // Optional. Labels to use for this message for easy lookup and client side
+  // filtering. Labels must meet the following constraints:
   //
   // * Keys and values can contain only lowercase letters, numeric characters,
   // underscores, and dashes.
@@ -83,7 +115,7 @@ message MessageBody {
   // * Keys must start with a lowercase letter or international character.
   // * Each message is limited to a maximum of 12 labels and less than 1024
   // bytes.
-  map<string, string> labels = 1;
+  map<string, string> labels = 1 [(google.api.field_behavior) = OPTIONAL];
 
   // Required. The actual message.
   google.protobuf.Any body = 2 [(google.api.field_behavior) = REQUIRED];
@@ -96,6 +128,7 @@ message StreamAgentMessagesRequest {
   // uniquely identify this message so service can ack.
   string message_id = 1 [(google.api.field_behavior) = REQUIRED];
 
+  // The type of message.
   oneof type {
     // Initial stream message. Must be sent before any other messages on this
     // stream.
@@ -129,6 +162,7 @@ message StreamAgentMessagesResponse {
   // identify this message so agent can ack.
   string message_id = 1;
 
+  // The type of message.
   oneof type {
     // Response to a message sent to the service.
     // Will be sent as soon as the service receives a message.
@@ -175,4 +209,7 @@ enum ErrorReason {
 
   // Message bandwidth of new connections is too high.
   AGENT_BANDWIDTH_RATE_QUOTA_EXCEEDED = 10;
+
+  // The SendAgentMessageRequest is invalid.
+  INVALID_SEND_AGENT_MESSAGE_REQUEST = 11;
 }
