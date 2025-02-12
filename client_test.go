@@ -69,9 +69,15 @@ func TestMain(m *testing.M) {
 
 	if err := os.Setenv("GCE_METADATA_HOST", strings.TrimPrefix(ts.URL, "http://")); err != nil {
 		log.Fatalf("Error running os.Setenv: %v", err)
-		os.Exit(1)
 	}
-	defer os.Unsetenv("GCE_METADATA_HOST")
+	// Best effort to get more logging during tests.
+	os.Setenv("GOOGLE_SDK_GO_LOGGING_LEVEL", "debug")
+	defer func() {
+		if err := os.Unsetenv("GCE_METADATA_HOST"); err != nil {
+			log.Fatalf("Error running os.Unsetenv: %v", err)
+		}
+		os.Unsetenv("GOOGLE_SDK_GO_LOGGING_LEVEL")
+	}()
 
 	out := m.Run()
 	ts.Close()
@@ -154,38 +160,87 @@ func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessa
 	return &acpb.SendAgentMessageResponse{MessageBody: req.GetMessageBody()}, nil
 }
 
-func createTestConnection(ctx context.Context) (*testSrv, *Connection, error) {
+func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
+	t.Cleanup(func() {
+		s.GracefulStop()
+	})
 	srv := newTestSrv(s)
 	acpb.RegisterAgentCommunicationServer(s, srv)
 
+	started := make(chan struct{})
 	go func() {
+		close(started)
 		if err := s.Serve(lis); err != nil {
 			log.Fatalf("Server exited with error: %v", err)
 		}
 	}()
+	// Give goroutine enough time to start
+	<-started
 
 	var bufDialer = func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
 
-	cc, err := grpc.DialContext(ctx, "bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return srv, nil, err
+	}
+
+	return srv, cc, nil
+}
+
+func TestSendAgentMessage(t *testing.T) {
+	ctx := context.Background()
+	_, cc, err := createTestSrv(t)
+	if err != nil {
+		t.Fatalf("createTestCC() failed: %v", err)
+	}
+
+	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	conn, err := CreateConnection(context.Background(), testChannelID, false, option.WithGRPCConn(cc))
-	return srv, conn, err
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+	got, err := SendAgentMessage(ctx, testChannelID, client, msg)
+	if err != nil {
+		t.Fatalf("SendAgentMessage returned an unexpected error: %v", err)
+	}
+
+	want := &acpb.SendAgentMessageResponse{MessageBody: msg}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("SendAgentMessage returned an unexpected diff (-want +got): %v", diff)
+	}
 }
 
-func TestCreateConnection(t *testing.T) {
-	srv, conn, err := createTestConnection(context.Background())
+func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection, error) {
+	srv, cc, err := createTestSrv(t)
 	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+		t.Fatalf("createTestSrv() failed: %v", err)
 	}
-	defer srv.grpcServer.Stop()
-	defer conn.Close()
+
+	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
+	if err != nil {
+		return nil, nil, err
+	}
+	conn, err := NewConnection(ctx, testChannelID, client)
+	if err != nil {
+		return nil, nil, err
+	}
+	t.Cleanup(func() {
+		conn.Close()
+	})
+	return srv, conn, nil
+}
+
+func TestNewConnection(t *testing.T) {
+	ctx := context.Background()
+	srv, _, err := newTestConnection(ctx, t)
+	if err != nil {
+		t.Fatalf("createTestConnection() failed: %v", err)
+	}
 
 	if len(srv.req) != 1 {
 		t.Fatalf("srv.req = %v, want 1", len(srv.req))
@@ -208,7 +263,7 @@ func TestCreateConnection(t *testing.T) {
 	}
 }
 
-func TestCreateConnectionErrors(t *testing.T) {
+func TestNewConnectionErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		err         error
@@ -233,39 +288,27 @@ func TestCreateConnectionErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-
-			lis := bufconn.Listen(bufSize)
-			s := grpc.NewServer()
-			defer s.Stop()
-			srv := newTestSrv(s)
-			srv.recvErr <- tc.err
-			acpb.RegisterAgentCommunicationServer(s, srv)
-
-			go func() {
-				if err := s.Serve(lis); err != nil {
-					log.Fatalf("Server exited with error: %v", err)
-				}
-			}()
-
-			var bufDialer = func(context.Context, string) (net.Conn, error) {
-				return lis.Dial()
-			}
-
-			cc, err := grpc.DialContext(ctx, "bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+			srv, cc, err := createTestSrv(t)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("createTestSrv() failed: %v", err)
+			}
+			srv.recvErr <- tc.err
+
+			client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
+			if err != nil {
+				t.Fatalf("NewClient() failed: %v", err)
 			}
 
-			conn, err := CreateConnection(context.Background(), testChannelID, false, option.WithGRPCConn(cc))
+			conn, err := NewConnection(ctx, testChannelID, client)
 			if err != nil {
 				if tc.expectError {
 					return
 				}
-				t.Fatalf("CreateConnection() failed: %v", err)
+				t.Fatalf("NewConnection() failed: %v", err)
 			}
 			defer conn.Close()
 			if tc.expectError {
-				t.Fatalf("CreateConnection() expected to fail")
+				t.Fatalf("NewConnection() expected to fail")
 			}
 
 			if len(srv.req) != 1 {
@@ -292,17 +335,17 @@ func TestCreateConnectionErrors(t *testing.T) {
 }
 
 func TestSendMessage(t *testing.T) {
-	srv, conn, err := createTestConnection(context.Background())
+	ctx := context.Background()
+	srv, conn, err := newTestConnection(ctx, t)
 	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+		t.Fatalf("newTestConnection() failed: %v", err)
 	}
-	defer srv.grpcServer.Stop()
-	defer conn.Close()
 
 	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
 	if err := conn.SendMessage(msg); err != nil {
 		t.Fatalf("SendMessage() failed: %v", err)
 	}
+	time.Sleep(5 * time.Millisecond)
 
 	if len(srv.req) != 2 {
 		t.Fatalf("srv.req = %v, want 2", len(srv.req))
@@ -353,12 +396,11 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, conn, err := createTestConnection(context.Background())
+			ctx := context.Background()
+			srv, conn, err := newTestConnection(ctx, t)
 			if err != nil {
-				t.Fatalf("CreateConnection() failed: %v", err)
+				t.Fatalf("newTestConnection() failed: %v", err)
 			}
-			defer srv.grpcServer.Stop()
-			defer conn.Close()
 			conn.timeToWaitForResp = 100 * time.Millisecond
 
 			// Lock the recv loop.
@@ -424,7 +466,7 @@ func TestClose(t *testing.T) {
 	ctx := context.Background()
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
-	defer s.Stop()
+	defer s.GracefulStop()
 	srv := newTestSrv(s)
 	acpb.RegisterAgentCommunicationServer(s, srv)
 
@@ -438,38 +480,60 @@ func TestClose(t *testing.T) {
 		return lis.Dial()
 	}
 
-	cc, err := grpc.Dial("bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	cc, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 
-	conn, err := CreateConnection(ctx, testChannelID, false, option.WithGRPCConn(cc))
+	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
 	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+
+	conn, err := NewConnection(ctx, testChannelID, client)
+	if err != nil {
+		t.Fatalf("NewConnection() failed: %v", err)
 	}
 
 	// Close the connection client side.
 	conn.Close()
-	// We expect this to fail with ErrConnectionClosed.
+	// We expect these both to fail with ErrConnectionClosed.
+	_, err = conn.Receive()
+	if !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("Receive() unexpected err: %v", err)
+	}
 	err = conn.SendMessage(&acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}})
 	if !errors.Is(err, ErrConnectionClosed) {
 		t.Fatalf("SendMessage() unexpected err: %v", err)
 	}
 
-	// Create a new connection using the same cc, this should fail
-	_, err = CreateConnection(ctx, testChannelID, false, option.WithGRPCConn(cc))
+	// Create a new connection using the same client, this should work.
+	conn, err = NewConnection(ctx, testChannelID, client)
+	if err != nil {
+		t.Fatalf("NewConnection() failed: %v", err)
+	}
+	conn.Close()
+
+	// Create a new connection using a closed client, this should fail.
+	client.Close()
+	_, err = NewConnection(ctx, testChannelID, client)
 	if err == nil {
-		t.Fatal("CreateConnection() expected to fail")
+		t.Fatal("NewConnection() expected to fail")
 	}
 
-	// Create a new connection with a new cc, this should work
-	cc, err = grpc.Dial("bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Create a new connection with a new client, this should work
+	t.Logf("Creating new client and a new connection")
+	cc, err = grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
-	conn, err = CreateConnection(ctx, testChannelID, false, option.WithGRPCConn(cc))
+	client, err = NewClient(ctx, false, option.WithGRPCConn(cc))
 	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+	conn, err = NewConnection(ctx, testChannelID, client)
+	if err != nil {
+		t.Fatalf("NewConnection() failed: %v", err)
 	}
 	defer conn.Close()
 
@@ -484,12 +548,11 @@ func TestClose(t *testing.T) {
 }
 
 func TestReceive(t *testing.T) {
-	srv, conn, err := createTestConnection(context.Background())
+	ctx := context.Background()
+	srv, conn, err := newTestConnection(ctx, t)
 	if err != nil {
-		t.Fatalf("CreateConnection() failed: %v", err)
+		t.Fatalf("createTestConnection() failed: %v", err)
 	}
-	defer srv.grpcServer.Stop()
-	defer conn.Close()
 	body := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
 	srv.send <- &acpb.StreamAgentMessagesResponse{MessageId: "test-message-id", Type: &acpb.StreamAgentMessagesResponse_MessageBody{MessageBody: body}}
 
