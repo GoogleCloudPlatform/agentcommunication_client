@@ -42,7 +42,7 @@ func main() {
 	if *endpoint != "" {
 		opts = append(opts, option.WithEndpoint(*endpoint))
 	}
-	conn, err := client.CreateConnection(ctx, *channel, false, opts...)
+	conn, err := client.CreateConnection(ctx, *channel, true /* regional */, opts...)
 	if err != nil {
 		log.Fatal(err)
 	}
