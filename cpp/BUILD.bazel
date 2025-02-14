@@ -1,6 +1,38 @@
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
+    name = "jwt",
+    srcs = ["jwt.cc"],
+    hdrs = ["jwt.h"],
+    # This library converts exceptions from the wrapped jwt library to absl::Status.
+    copts = [
+        "-fexceptions",
+    ],
+    deps = [
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings",
+        "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/types:span",
+        "@jwt-cpp//include/jwt-cpp:jwt",
+        "@jwt-cpp//include/jwt-cpp/traits/nlohmann-json:specialization",
+        "@jwt-cpp//include/jwt-cpp/traits/nlohmann-json:traits",
+    ],
+)
+
+cc_test(
+    name = "jwt_test",
+    srcs = ["jwt_test.cc"],
+    deps = [
+        ":jwt",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings:string_view",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "acs_agent_helper",
     srcs = ["acs_agent_helper.cc"],
     hdrs = ["acs_agent_helper.h"],
