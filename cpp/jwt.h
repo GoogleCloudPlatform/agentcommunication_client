@@ -23,12 +23,15 @@ namespace agent_communication {
 //   "sub": "test_sub",
 //   "google": {
 //     "compute_engine": {
-//       "zone": "test_zone"
+//       "zone": "test_zone",
+//       "project_number": 123456789
 //     }
 //   }
 // }
 // and the `keys` is {"google", "compute_engine", "zone"}, then the function
 // will return "test_zone".
+// and if the `keys` is {"google", "compute_engine", "project_number"}, then
+// the function will return "123456789" as a string.
 // The function will return an error status if any of the following happens:
 // 1. The `token` is invalid.
 // 2. The `keys` is empty.

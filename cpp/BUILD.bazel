@@ -37,6 +37,7 @@ cc_library(
     srcs = ["acs_agent_helper.cc"],
     hdrs = ["acs_agent_helper.h"],
     deps = [
+        ":jwt",
         "//proto:agent_communication_cc_proto",
         "@abseil-cpp//absl/log:absl_log",
         "@abseil-cpp//absl/status",
