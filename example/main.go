@@ -42,7 +42,11 @@ func main() {
 	if *endpoint != "" {
 		opts = append(opts, option.WithEndpoint(*endpoint))
 	}
-	conn, err := client.CreateConnection(ctx, *channel, false, opts...)
+	acsClient, err := client.NewClient(ctx, false, opts...)
+	if err != nil {
+		log.Fatal(err)
+	}
+	conn, err := client.NewConnection(ctx, *channel, acsClient)
 	if err != nil {
 		log.Fatal(err)
 	}

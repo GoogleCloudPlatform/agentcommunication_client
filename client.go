@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/agentcommunication_client/gapic"
-	cm "cloud.google.com/go/compute/metadata"
 	"google.golang.org/api/option"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -69,7 +68,7 @@ func loggerPrintf(format string, v ...any) {
 // Caller must close the returned client when it is done being used to clean up its underlying
 // connections.
 func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
-	zone, err := cm.Zone()
+	zone, err := getZone()
 	if err != nil {
 		return nil, err
 	}
@@ -95,21 +94,12 @@ func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) 
 // StreamAgentMessages with a single message and waiting for the response.
 func SendAgentMessage(ctx context.Context, channelID string, client *agentcommunication.Client, msg *acpb.MessageBody) (*acpb.SendAgentMessageResponse, error) {
 	loggerPrintf("SendAgentMessage")
-	zone, err := cm.Zone()
+	resourceID, err := getResourceID()
 	if err != nil {
 		return nil, err
 	}
-	projectNum, err := cm.NumericProjectID()
-	if err != nil {
-		return nil, err
-	}
-	instanceID, err := cm.InstanceID()
-	if err != nil {
-		return nil, err
-	}
-	resourceID := fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID)
 
-	token, err := cm.Get("instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full")
+	token, err := getIdentityToken()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGettingInstanceToken, err)
 	}
@@ -474,7 +464,7 @@ func createStreamLoop(ctx context.Context, client *agentcommunication.Client, re
 
 func (c *Connection) createStream(ctx context.Context) error {
 	loggerPrintf("Creating stream.")
-	token, err := cm.Get("instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full")
+	token, err := getIdentityToken()
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrGettingInstanceToken, err)
 	}
@@ -537,19 +527,11 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 		callerManagedClient: true,
 	}
 
-	zone, err := cm.Zone()
+	var err error
+	conn.resourceID, err = getResourceID()
 	if err != nil {
 		return nil, err
 	}
-	projectNum, err := cm.NumericProjectID()
-	if err != nil {
-		return nil, err
-	}
-	instanceID, err := cm.InstanceID()
-	if err != nil {
-		return nil, err
-	}
-	conn.resourceID = fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID)
 
 	if err := conn.createStream(ctx); err != nil {
 		conn.close(err)
@@ -572,20 +554,11 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 		timeToWaitForResp: 2 * time.Second,
 	}
 
-	zone, err := cm.Zone()
+	var err error
+	conn.resourceID, err = getResourceID()
 	if err != nil {
 		return nil, err
 	}
-	projectNum, err := cm.NumericProjectID()
-	if err != nil {
-		return nil, err
-	}
-	instanceID, err := cm.InstanceID()
-	if err != nil {
-		return nil, err
-	}
-	conn.resourceID = fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID)
-
 	conn.client, err = NewClient(ctx, regional, opts...)
 	if err != nil {
 		return nil, err
