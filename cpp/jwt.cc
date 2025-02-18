@@ -51,12 +51,15 @@ absl::StatusOr<std::string> GetValueFromTokenPayloadWithKeys(
       }
       json_obj = json_obj[key];
     }
-    if (!json_obj.is_string()) {
-      return absl::InternalError(absl::StrFormat(
-          "Token %s does not have a string value for key (%s): ",
-          json_obj.dump(), absl::StrJoin(keys, ",")));
+    if (json_obj.is_number()) {
+      return json_obj.dump();
     }
-    return json_obj.get<std::string>();
+    if (json_obj.is_string()) {
+      return json_obj.get<std::string>();
+    }
+    return absl::InternalError(absl::StrFormat(
+        "Token %s does not have a string/number value for key (%s): ",
+        json_obj.dump(), absl::StrJoin(keys, ",")));
   } catch (const std::exception& e) {
     // The try-catch is to catch the exception thrown by the jwt-cpp
     // library. This is probably redundant since we already have the try-catch

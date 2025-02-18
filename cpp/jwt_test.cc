@@ -89,6 +89,15 @@ TEST(JwtTest, CanGetValuesFromTokenPayloadWithMultipleKey) {
   EXPECT_EQ(*zone, "europe-west1-b");
 }
 
+TEST(JwtTest, CanGetValuesFromTokenPayloadWithMultipleKeyWithNumberValue) {
+  // Test multi-layer query successfully.
+  absl::StatusOr<std::string> project_number = GetValueFromTokenPayloadWithKeys(
+      std::string(kFullValidToken),
+      {"google", "compute_engine", "project_number"});
+  ASSERT_OK(project_number);
+  EXPECT_EQ(*project_number, "326694433618");
+}
+
 TEST(JwtTest,
      FailureStatusWhenGetValuesFromTokenPayloadWithMultiLayerKeyMissing) {
   // Test multi-layer query unsuccessfully due to key missing.
@@ -110,8 +119,9 @@ TEST(JwtTest,
       std::string(kFullValidToken), {"google"});
   ASSERT_FALSE(google.ok());
   EXPECT_THAT(google.status().code(), absl::StatusCode::kInternal);
-  EXPECT_THAT(google.status().message(),
-              HasSubstr("does not have a string value for key (google)"));
+  EXPECT_THAT(
+      google.status().message(),
+      HasSubstr("does not have a string/number value for key (google)"));
 }
 
 TEST(JwtTest, FailureStatusWhenGetValuesFromTokenPayloadWithTooManyLayersKey) {
