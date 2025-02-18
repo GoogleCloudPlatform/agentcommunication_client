@@ -9,10 +9,9 @@
 #include "absl/strings/str_format.h"
 #include "absl/strings/str_join.h"
 #include "absl/types/span.h"
-#include "third_party/jwt-cpp/jwt.h"
-#include "third_party/jwt_cpp/include/jwt-cpp/jwt.h"
-#include "third_party/jwt_cpp/include/jwt-cpp/traits/nlohmann-json/defaults.h"
-#include "third_party/jwt_cpp/include/jwt-cpp/traits/nlohmann-json/traits.h"
+#include "jwt-cpp/jwt.h"
+#include "jwt-cpp/traits/nlohmann-json/defaults.h"
+#include "jwt-cpp/traits/nlohmann-json/traits.h"
 
 namespace agent_communication {
 using decoded_jwt_t = ::jwt::decoded_jwt<jwt::traits::nlohmann_json>;
