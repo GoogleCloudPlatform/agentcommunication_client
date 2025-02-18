@@ -49,6 +49,10 @@ const (
 	testChannelID  = "test-channel"
 	testResourceID = "projects/test-project/zones/test-zone/instances/test-instance"
 	bufSize        = 1024 * 1024
+
+	// This is a minimal token that our code can parse, it should be a valid JWT token but was
+	// generated just for this test.
+	rawToken = "eyJhbGciOiIiLCJ0eXAiOiIifQ.eyJpc3MiOiIiLCJhdWQiOiIiLCJleHAiOjEyNTc4OTc1OTAsImlhdCI6MTI1Nzg5Mzk5MH0.P1kofb3I0Eaxd6xAWI0mLrfR2k48sIU9K_iWpwXQIX66Cd95dXtkGJ8JQ74KIWHK_HSYB7i7kSbukDl6VjDc1HrZlRtM8pVNbIv0lHyDe8FZgvW2w33964hk96I0M2NcSLyj6jO42yvWEs0VFJwoAuWtX9jXUqb7vlQf-ElmUXbx5jsKvMqjS6KtT44wQzUg9MjsOTfU9AEKhn-p0liNb-QJxG2Z0NzGI6dCfKchd-mXgpnn0r_2OAZ0aCICNu50ye74hfPCkEpTK5w4PWDoLNhWhJabBSoM4umct49G3nZ5jO1Auh50QaprskS_c82ZzgttNvNzv3NShHAAODCI8w"
 )
 
 func TestMain(m *testing.M) {
@@ -63,7 +67,7 @@ func TestMain(m *testing.M) {
 		case "/computeMetadata/v1/instance/id":
 			fmt.Fprint(w, "test-instance")
 		case "/computeMetadata/v1/instance/service-accounts/default/identity":
-			fmt.Fprint(w, "test-token")
+			fmt.Fprint(w, rawToken)
 		}
 	}))
 
@@ -252,7 +256,7 @@ func TestNewConnection(t *testing.T) {
 	}
 
 	wantHeaders := map[string][]string{
-		"authentication":                  []string{"Bearer test-token"},
+		"authentication":                  []string{fmt.Sprintf("Bearer %s", rawToken)},
 		"agent-communication-channel-id":  []string{"test-channel"},
 		"agent-communication-resource-id": []string{"projects/test-project/zones/test-zone/instances/test-instance"},
 	}
@@ -321,7 +325,7 @@ func TestNewConnectionErrors(t *testing.T) {
 			}
 
 			wantHeaders := map[string][]string{
-				"authentication":                  []string{"Bearer test-token"},
+				"authentication":                  []string{fmt.Sprintf("Bearer %s", rawToken)},
 				"agent-communication-channel-id":  []string{"test-channel"},
 				"agent-communication-resource-id": []string{"projects/test-project/zones/test-zone/instances/test-instance"},
 			}
@@ -562,5 +566,32 @@ func TestReceive(t *testing.T) {
 	}
 	if diff := cmp.Diff(msg, body, protocmp.Transform(), cmpopts.IgnoreUnexported()); diff != "" {
 		t.Errorf("Receive() diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestGetIdentityToken(t *testing.T) {
+	// Setup Token
+	future := time.Now().Add(time.Hour)
+	idToken.expTime = &future
+	idToken.raw = "first-token"
+
+	// Validate raw token is returned if exp is in the future.
+	token, err := getIdentityToken()
+	if err != nil {
+		t.Fatalf("getIdentityToken() failed: %v", err)
+	}
+	if token != "first-token" {
+		t.Errorf("idToken.raw = %v, want first-token", idToken.raw)
+	}
+
+	// Validate token is refreshed if exp is in the past.
+	past := time.Now().Add(-time.Hour)
+	idToken.expTime = &past
+	token, err = getIdentityToken()
+	if err != nil {
+		t.Fatalf("getIdentityToken() failed: %v", err)
+	}
+	if token != rawToken {
+		t.Errorf("idToken.raw = %v, want %v", idToken.raw, rawToken)
 	}
 }
