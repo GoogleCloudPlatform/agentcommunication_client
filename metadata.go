@@ -32,13 +32,14 @@ const (
 )
 
 type cachedValue struct {
-	k string
-	v string
+	k      string
+	v      string
+	parser func(string) string
 	sync.Mutex
 }
 
 var (
-	zone    = &cachedValue{k: "instance/zone"}
+	zone    = &cachedValue{k: "instance/zone", parser: func(v string) string { return v[strings.LastIndex(v, "/")+1:] }}
 	projNum = &cachedValue{k: "project/numeric-project-id"}
 	instID  = &cachedValue{k: "instance/id"}
 	idToken = &cachedIDToken{}
@@ -50,11 +51,15 @@ func (c *cachedValue) get() (string, error) {
 	if c.v != "" {
 		return c.v, nil
 	}
-	v, err := metadata.Get(c.k)
+	var err error
+	c.v, err = metadata.Get(c.k)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(v), nil
+	if c.parser != nil {
+		c.v = c.parser(c.v)
+	}
+	return c.v, nil
 }
 
 type claimSet struct {
