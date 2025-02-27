@@ -22,6 +22,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,6 +42,11 @@ import (
 func init() {
 	logger = log.New(os.Stderr, "", log.Ldate|log.Ltime|log.Lshortfile)
 }
+
+const (
+	metadataMessageRateLimit = "agent-communication-message-rate-limit"
+	metadataBandwidthLimit   = "agent-communication-bandwidth-limit"
+)
 
 var (
 	// DebugLogging enables debug logging.
@@ -141,6 +147,24 @@ type Connection struct {
 
 	regional          bool
 	timeToWaitForResp time.Duration
+
+	limitsMx              sync.Mutex
+	messageRateLimit      int
+	messageBandwidthLimit int
+}
+
+// MessageRateLimit returns the message limit (in messages/minute) for the connection.
+func (c *Connection) MessageRateLimit() int {
+	c.limitsMx.Lock()
+	defer c.limitsMx.Unlock()
+	return c.messageRateLimit
+}
+
+// MessageBandwidthLimit returns the message bandwidth limit (in bytes/minute) for the connection.
+func (c *Connection) MessageBandwidthLimit() int {
+	c.limitsMx.Lock()
+	defer c.limitsMx.Unlock()
+	return c.messageBandwidthLimit
 }
 
 // Close the connection.
@@ -258,7 +282,7 @@ func (c *Connection) SendMessage(msg *acpb.MessageBody) error {
 }
 
 // Receive messages, Receive should be called continuously for the life of the stream connection,
-// any delay (>500ms) in Receive when there are queued messages will cause the server to disconnect the
+// any delay in Receive when there are queued messages will cause the server to disconnect the
 // stream. This means handling the MessageBody from Receive should not be blocking, offload message
 // handling to another goroutine and immediately call Receive again.
 func (c *Connection) Receive() (*acpb.MessageBody, error) {
@@ -330,6 +354,42 @@ func (c *Connection) acknowledgeMessage(messageID string, streamClosed, streamSe
 		return fmt.Errorf("connection closed with err: %w", c.closeErr)
 	default:
 		return c.streamSend(ackReq, streamClosed, streamSendLock, stream)
+	}
+}
+
+func (c *Connection) readHeaders(stream acpb.AgentCommunication_StreamAgentMessagesClient) {
+	md, err := stream.Header()
+	if err != nil {
+		loggerPrintf("Error getting stream header: %v", err)
+		return
+	}
+
+	c.limitsMx.Lock()
+	defer c.limitsMx.Unlock()
+
+	value := md.Get(metadataMessageRateLimit)
+	if len(value) > 0 {
+		rateLimit, err := strconv.Atoi(value[0])
+		if err != nil {
+			loggerPrintf("Error parsing message rate limit: %v", err)
+		} else {
+			c.messageRateLimit = rateLimit
+			loggerPrintf("Message rate limit: %d", c.messageRateLimit)
+		}
+	} else {
+		loggerPrintf("No message rate limit")
+	}
+	value = md.Get(metadataBandwidthLimit)
+	if len(value) > 0 {
+		bandwidthLimit, err := strconv.Atoi(value[0])
+		if err != nil {
+			loggerPrintf("Error parsing message bandwidth limit: %v", err)
+		} else {
+			c.messageBandwidthLimit = bandwidthLimit
+			loggerPrintf("Message bandwidth limit: %d", c.messageBandwidthLimit)
+		}
+	} else {
+		loggerPrintf("No message bandwidth limit")
 	}
 }
 
@@ -486,6 +546,10 @@ func (c *Connection) createStream(ctx context.Context) error {
 		c.close(err)
 		return err
 	}
+
+	// Reading headers is best effort, if we fail to read headers we will just log the error and
+	// continue.
+	c.readHeaders(stream)
 
 	// Used to signal that the stream is closed.
 	streamClosed := make(chan struct{})

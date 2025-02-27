@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,9 @@ const (
 	testChannelID  = "test-channel"
 	testResourceID = "projects/test-project/zones/test-zone/instances/test-instance"
 	bufSize        = 1024 * 1024
+
+	metadataMessageRateLimitValue = 100
+	metadataBandwidthLimitValue   = 1000000000
 
 	// This is a minimal token that our code can parse, it should be a valid JWT token but was
 	// generated just for this test.
@@ -115,6 +119,14 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 
 	md, _ := metadata.FromIncomingContext(stream.Context())
 	s.headers = md
+
+	respHeaders := map[string]string{
+		metadataMessageRateLimit: strconv.Itoa(metadataMessageRateLimitValue),
+		metadataBandwidthLimit:   strconv.Itoa(metadataBandwidthLimitValue),
+	}
+	if err := stream.SetHeader(metadata.New(respHeaders)); err != nil {
+		return err
+	}
 
 	go func() {
 		for {
@@ -241,7 +253,8 @@ func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection
 
 func TestNewConnection(t *testing.T) {
 	ctx := context.Background()
-	srv, _, err := newTestConnection(ctx, t)
+
+	srv, conn, err := newTestConnection(ctx, t)
 	if err != nil {
 		t.Fatalf("createTestConnection() failed: %v", err)
 	}
@@ -264,6 +277,13 @@ func TestNewConnection(t *testing.T) {
 		if !reflect.DeepEqual(srv.headers.Get(k), v) {
 			t.Errorf("srv.headers[%s] = %v, want %v", k, srv.headers[k], v)
 		}
+	}
+
+	if conn.MessageBandwidthLimit() != metadataBandwidthLimitValue {
+		t.Errorf("conn.MessageBandwidthLimit() = %v, want %v", conn.MessageBandwidthLimit(), metadataBandwidthLimitValue)
+	}
+	if conn.MessageRateLimit() != metadataMessageRateLimitValue {
+		t.Errorf("conn.MessageRateLimit() = %v, want %v", conn.MessageRateLimit(), metadataMessageRateLimitValue)
 	}
 }
 
