@@ -1,4 +1,7 @@
-package(default_visibility = ["//visibility:public"])
+# C++ Client library for AgentCommunication API.
+package(
+    default_visibility = ["//visibility:public"],
+)
 
 cc_library(
     name = "jwt",
@@ -66,11 +69,10 @@ cc_library(
         "@abseil-cpp//absl/base:core_headers",
         "@abseil-cpp//absl/functional:any_invocable",
         "@abseil-cpp//absl/log:absl_log",
-        "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/strings:str_format",
-        "@abseil-cpp//absl/strings:string_view",
         "@abseil-cpp//absl/synchronization",
         "@com_google_grpc//:grpc++",
+        "@com_google_grpc//:grpc_security_base",
     ],
 )
 
@@ -99,6 +101,7 @@ cc_test(
         "@abseil-cpp//absl/log:absl_log",
         "@abseil-cpp//absl/time",
         "@com_google_grpc//:grpc++",
+        "@com_google_grpc//:grpc_security_base",
         "@googletest//:gtest_main",
     ],
 )
