@@ -99,6 +99,10 @@ class FakeAcsAgentServiceImpl final
   StreamAgentMessages(grpc::CallbackServerContext* context)
       ABSL_LOCKS_EXCLUDED(reactor_mtx_) override;
 
+  // Adds initial metadata to the server context. The metadata needs to be
+  // called after the reactor is created, before the reactor writes any message.
+  void AddInitialMetadata(const std::string& key, const std::string& value);
+
   // Adds a response to the buffer of the server reactor.
   void AddResponse(
       std::unique_ptr<

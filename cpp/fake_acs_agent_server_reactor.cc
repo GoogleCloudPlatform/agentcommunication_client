@@ -90,6 +90,15 @@ FakeAcsAgentServiceImpl::StreamAgentMessages(
   return reactor_;
 }
 
+void FakeAcsAgentServiceImpl::AddInitialMetadata(const std::string& key,
+                                                 const std::string& value) {
+  absl::MutexLock lock(&reactor_mtx_);
+  if (reactor_ == nullptr) {
+    return;
+  }
+  context_->AddInitialMetadata(key, value);
+}
+
 void FakeAcsAgentServiceImpl::AddResponse(std::unique_ptr<Response> response) {
   absl::MutexLock lock(&reactor_mtx_);
   if (reactor_ == nullptr) {

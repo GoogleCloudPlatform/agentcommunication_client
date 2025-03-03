@@ -12,8 +12,10 @@
 #include <utility>
 
 #include "proto/agent_communication.grpc.pb.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/log/absl_log.h"
+#include "absl/status/status.h"
 #include "absl/time/clock.h"
 #include "absl/time/time.h"
 #include "cpp/fake_acs_agent_server_reactor.h"
@@ -37,6 +39,7 @@ using Response =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesResponse;
 using Request =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesRequest;
+using ::testing::AnyOf;
 
 // Waits for the condition to be true for the given timeout.
 bool WaitUntil(std::function<bool()> condition, absl::Duration timeout) {
@@ -276,6 +279,114 @@ TEST_F(AcsAgentClientReactorTest, TestCancel) {
   grpc::Status status_value = status_future.get();
   EXPECT_EQ(status_value.error_code(), grpc::StatusCode::CANCELLED);
   await_thread.join();
+}
+
+TEST_F(AcsAgentClientReactorTest, TestReactorCanInitializeQuota) {
+  // Create a client reactor with a read callback to do nothing.
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+  ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
+                        absl::Seconds(10)));
+  // Add initial metadata to the server after the reactor is created, before the
+  // client reactor sends the request.
+  service_.AddInitialMetadata("agent-communication-message-rate-limit", "1");
+  service_.AddInitialMetadata("agent-communication-bandwidth-limit", "100");
+  ABSL_LOG(INFO) << "Setup done";
+  // Create a request.
+  std::unique_ptr<Request> request = MakeRequestWithBody("body test");
+  // Add the request to the reactor.
+  ASSERT_TRUE(reactor_->AddRequest(*request));
+
+  ASSERT_TRUE(WaitUntil(
+      [this]() {
+        return reactor_->GetMessagesPerMinuteQuota().ok() &&
+               reactor_->GetBytesPerMinuteQuota().ok();
+      },
+      absl::Seconds(10)));
+  EXPECT_EQ(*reactor_->GetMessagesPerMinuteQuota(), 1);
+  EXPECT_EQ(*reactor_->GetBytesPerMinuteQuota(), 100);
+}
+
+TEST_F(AcsAgentClientReactorTest,
+       TestReactorCanInitializeQuotaWithMultipleMetadataWithSameKey) {
+  // Create a client reactor with a read callback to do nothing.
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+  ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
+                        absl::Seconds(10)));
+  // Add initial metadata to the server after the reactor is created, before the
+  // client reactor sends the request.
+  service_.AddInitialMetadata("agent-communication-message-rate-limit", "1");
+  service_.AddInitialMetadata("agent-communication-message-rate-limit", "100");
+  ABSL_LOG(INFO) << "Setup done";
+
+  // Before the server sends the initial metadata, the client reactor should not
+  // be able to get the quota.
+  EXPECT_EQ(reactor_->GetMessagesPerMinuteQuota().status().code(),
+            absl::StatusCode::kFailedPrecondition);
+  EXPECT_EQ(reactor_->GetBytesPerMinuteQuota().status().code(),
+            absl::StatusCode::kFailedPrecondition);
+
+  // Create a request.
+  std::unique_ptr<Request> request = MakeRequestWithBody("body test");
+  // Add the request to the reactor.
+  ASSERT_TRUE(reactor_->AddRequest(*request));
+
+  ASSERT_TRUE(WaitUntil(
+      [this]() { return reactor_->GetMessagesPerMinuteQuota().ok(); },
+      absl::Seconds(10)));
+  EXPECT_THAT(*reactor_->GetMessagesPerMinuteQuota(), AnyOf(1, 100));
+}
+
+TEST_F(AcsAgentClientReactorTest,
+       TestReactorCanInitializeQuotaWithInvalidMetadata) {
+  // Create a client reactor with a read callback to do nothing.
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+  ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
+                        absl::Seconds(10)));
+  service_.AddInitialMetadata("agent-communication-message-rate-limit", "a");
+  service_.AddInitialMetadata("agent-communication-bandwidth-limit", "100");
+  ABSL_LOG(INFO) << "Setup done";
+  // Create a request.
+  std::unique_ptr<Request> request = MakeRequestWithBody("body test");
+  // Add the request to the reactor.
+  ASSERT_TRUE(reactor_->AddRequest(*request));
+
+  ASSERT_TRUE(WaitUntil(
+      [this]() {
+        return !reactor_->GetMessagesPerMinuteQuota().ok() &&
+               reactor_->GetBytesPerMinuteQuota().ok();
+      },
+      absl::Seconds(10)));
+  EXPECT_EQ(reactor_->GetMessagesPerMinuteQuota().status().code(),
+            absl::StatusCode::kNotFound);
+  EXPECT_EQ(*reactor_->GetBytesPerMinuteQuota(), 100);
+}
+
+TEST_F(AcsAgentClientReactorTest,
+       TestReactorCanInitializeQuotaWithEmptyMetadata) {
+  // Create a client reactor with a read callback to do nothing.
+  reactor_ = std::make_unique<AcsAgentClientReactor>(
+      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+  ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
+                        absl::Seconds(10)));
+  ABSL_LOG(INFO) << "Setup done";
+  // Create a request.
+  std::unique_ptr<Request> request = MakeRequestWithBody("body test");
+  // Add the request to the reactor.
+  ASSERT_TRUE(reactor_->AddRequest(*request));
+
+  EXPECT_FALSE(WaitUntil(
+      [this]() {
+        return reactor_->GetMessagesPerMinuteQuota().ok() ||
+               reactor_->GetBytesPerMinuteQuota().ok();
+      },
+      absl::Seconds(3)));
+  EXPECT_EQ(reactor_->GetMessagesPerMinuteQuota().status().code(),
+          absl::StatusCode::kNotFound);
+  EXPECT_EQ(reactor_->GetBytesPerMinuteQuota().status().code(),
+          absl::StatusCode::kNotFound);
 }
 
 }  // namespace
