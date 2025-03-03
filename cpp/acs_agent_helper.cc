@@ -4,7 +4,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "google/rpc/status.pb.h"
 #include "absl/log/absl_log.h"
@@ -12,8 +11,9 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
-#include "absl/strings/str_split.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
+#include "cpp/jwt.h"
 #include "curl/curl.h"
 #include "curl/easy.h"
 
@@ -41,6 +41,24 @@ using Request =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesRequest;
 using Response =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesResponse;
+
+constexpr absl::string_view kAcsTokenEndpointGce =
+    "instance/service-accounts/default/"
+    "identity?audience=agentcommunication.googleapis.com&format=full";
+
+// TODO: b/384093718 - Update the endpoint once the token endpoint is finalized.
+constexpr absl::string_view kAcsTokenEndpointGke =
+    "instance/gke/agent-communication-service/ncclmetrics-token/"
+    "identity?audience=agentcommunication.googleapis.com&format=full";
+
+// Internal helper struct to hold the ACS token and the parsed values from the
+// token.
+struct AcsToken {
+  std::string token;
+  std::string instance_id;
+  std::string project_number;
+  std::string zone;
+};
 
 std::unique_ptr<Request> MakeAck(std::string message_id) {
   google::rpc::Status status;
@@ -143,36 +161,50 @@ absl::StatusOr<std::string> GetMetadata(absl::string_view key) {
       "Metadata-Flavor: Google");
 }
 
-absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
-    std::string channel_id, bool regional) {
-  absl::StatusOr<std::string> token = GetMetadata(
-      "instance/service-accounts/default/"
-      "identity?audience=agentcommunication.googleapis.com&format=full");
+absl::StatusOr<AcsToken> ParseAcsToken(absl::string_view endpoint) {
+  absl::StatusOr<std::string> token = GetMetadata(endpoint);
   if (!token.ok()) {
     return token.status();
   }
   ABSL_VLOG(2) << "Successfully got token from metadata service: " << *token;
-
-  absl::StatusOr<std::string> numeric_project_id_zone =
-      GetMetadata("instance/zone");
-  if (!numeric_project_id_zone.ok()) {
-    return numeric_project_id_zone.status();
+  absl::StatusOr<std::string> instance_id = GetValueFromTokenPayloadWithKeys(
+      *token, {"google", "compute_engine", "instance_id"});
+  if (!instance_id.ok()) {
+    return instance_id.status();
   }
-  std::vector<std::string> numeric_project_id_zone_vector =
-      absl::StrSplit(*numeric_project_id_zone, '/');
-  if (numeric_project_id_zone_vector.size() != 4) {
-    ABSL_LOG(ERROR)
-        << "Wrong format of numeric_project_id_zone from metadata service: "
-        << numeric_project_id_zone;
-    return absl::InternalError(absl::StrCat(
-        "Wrong format of numeric_project_id_zone from metadata service: ",
-        *numeric_project_id_zone));
+  ABSL_VLOG(2) << "Successfully got instance_id from metadata service: "
+               << *instance_id;
+  absl::StatusOr<std::string> project_number = GetValueFromTokenPayloadWithKeys(
+      *token, {"google", "compute_engine", "project_number"});
+  if (!project_number.ok()) {
+    return project_number.status();
   }
-  ABSL_VLOG(2)
-      << "Successfully got numeric_project_id_zone from metadata service: "
-      << *numeric_project_id_zone;
-  const std::string& zone = numeric_project_id_zone_vector[3];
+  ABSL_VLOG(2) << "Successfully got project_number from metadata service: "
+               << *project_number;
+  absl::StatusOr<std::string> zone = GetValueFromTokenPayloadWithKeys(
+      *token, {"google", "compute_engine", "zone"});
+  if (!zone.ok()) {
+    return zone.status();
+  }
+  ABSL_VLOG(2) << "Successfully got zone from metadata service: " << *zone;
+  return AcsToken{.token = *std::move(token),
+                  .instance_id = *std::move(instance_id),
+                  .project_number = *std::move(project_number),
+                  .zone = *std::move(zone)};
+}
 
+absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
+    std::string channel_id, bool regional) {
+  absl::StatusOr<AcsToken> AcsToken = ParseAcsToken(kAcsTokenEndpointGce);
+  if (!AcsToken.ok()) {
+    // If the token is not available from the GCE endpoint, try the GKE
+    // endpoint.
+    AcsToken = ParseAcsToken(kAcsTokenEndpointGke);
+    if (!AcsToken.ok()) {
+      return AcsToken.status();
+    }
+  }
+  const std::string& zone = AcsToken->zone;
   // Deduce the location from the zone.
   // If regional is true, the location is the zone without the last two
   // characters. Otherwise, the location is the zone itself.
@@ -189,16 +221,10 @@ absl::StatusOr<AgentConnectionId> GenerateAgentConnectionId(
                          "-agentcommunication.sandbox.googleapis.com:443")
           : absl::StrCat(location, "-agentcommunication.googleapis.com:443");
 
-  absl::StatusOr<std::string> instance_id = GetMetadata("instance/id");
-  if (!instance_id.ok()) {
-    return instance_id.status();
-  }
-  ABSL_VLOG(2) << "Successfully got instance_id from metadata service: "
-                 << *instance_id;
-
   std::string resource_id =
-      absl::StrCat(*numeric_project_id_zone, "/instances/", *instance_id);
-  return AgentConnectionId{.token = std::move(*token),
+      absl::StrFormat("projects/%s/zones/%s/instances/%s",
+                      AcsToken->project_number, zone, AcsToken->instance_id);
+  return AgentConnectionId{.token = std::move(AcsToken->token),
                            .resource_id = std::move(resource_id),
                            .channel_id = std::move(channel_id),
                            .endpoint = std::move(endpoint),
