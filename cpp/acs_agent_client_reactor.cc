@@ -2,6 +2,8 @@
 
 #include <unistd.h>
 
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -9,6 +11,10 @@
 #include "proto/agent_communication.grpc.pb.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
+#include "absl/strings/numbers.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
@@ -16,6 +22,7 @@
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/support/channel_arguments.h"
 #include "grpcpp/support/status.h"
+#include "grpcpp/support/string_ref.h"
 
 namespace agent_communication {
 
@@ -67,6 +74,16 @@ std::unique_ptr<AcsStub> AcsAgentClientReactor::CreateStub(
       grpc::CreateCustomChannel(
           endpoint,
           grpc::SslCredentials(options), channel_args));
+}
+
+absl::StatusOr<uint64_t> AcsAgentClientReactor::GetMessagesPerMinuteQuota() {
+  absl::MutexLock lock(&status_mtx_);
+  return messages_per_minute_quota_;
+}
+
+absl::StatusOr<uint64_t> AcsAgentClientReactor::GetBytesPerMinuteQuota() {
+  absl::MutexLock lock(&status_mtx_);
+  return bytes_per_minute_quota_;
 }
 
 bool AcsAgentClientReactor::Cancel() {
@@ -131,6 +148,50 @@ void AcsAgentClientReactor::OnReadDone(bool ok) {
   }
   read_callback_(std::move(response_), true);
   StartRead(&response_);
+}
+
+void AcsAgentClientReactor::OnReadInitialMetadataDone(bool ok) {
+  if (!ok) {
+    ABSL_LOG(WARNING) << "OnReadInitialMetadataDone not ok";
+    return;
+  }
+  const std::multimap<grpc::string_ref, grpc::string_ref>& metadata =
+      context_.GetServerInitialMetadata();
+  absl::MutexLock lock(&status_mtx_);
+  messages_per_minute_quota_ = GetIntValueFromInitialMetadata<uint64_t>(
+      metadata, kMessagesPerMinuteQuotaKey);
+  bytes_per_minute_quota_ = GetIntValueFromInitialMetadata<uint64_t>(
+      metadata, kBytesPerMinuteQuotaKey);
+}
+
+template <typename T>
+absl::StatusOr<T> AcsAgentClientReactor::GetIntValueFromInitialMetadata(
+    const std::multimap<grpc::string_ref, grpc::string_ref>& metadata,
+    const std::string& key) {
+  if (!metadata.contains(key)) {
+    return absl::NotFoundError(absl::StrCat(
+        "The key: ", key, " was not found in initial metadata from server."));
+  }
+  auto [range_begin, range_end] = metadata.equal_range(key);
+  // Theoretically, there should be <=1 value for the quota keys in the initial
+  // metadata of server. If there are multiple values, we will return the first
+  // valid value.
+  for (auto it = range_begin; it != range_end; ++it) {
+    T value = 0;
+    std::string value_str(it->second.data(), it->second.size());
+    if (!absl::SimpleAtoi(value_str, &value)) {
+      ABSL_LOG(WARNING) << "key: " << key
+                        << " found in initial metadata from server but its "
+                           "value having the wrong format: "
+                        << value_str;
+    } else {
+      return value;
+    }
+  }
+  return absl::NotFoundError(
+      absl::StrCat("key: ", key,
+                   " was found in initial metadata from server but its value "
+                   "was not a valid integer."));
 }
 
 void AcsAgentClientReactor::OnDone(const ::grpc::Status& status) {

@@ -102,6 +102,22 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
   return client;
 }
 
+absl::StatusOr<uint64_t> AcsAgentClient::GetMessagePerMinuteQuota() {
+  absl::MutexLock lock(&reactor_mtx_);
+  if (reactor_ == nullptr || stream_state_ != ClientState::kReady) {
+    return absl::FailedPreconditionError("stream not initialized.");
+  }
+  return reactor_->GetMessagesPerMinuteQuota();
+}
+
+absl::StatusOr<uint64_t> AcsAgentClient::GetBytesPerMinuteQuota() {
+  absl::MutexLock lock(&reactor_mtx_);
+  if (reactor_ == nullptr || stream_state_ != ClientState::kReady) {
+    return absl::FailedPreconditionError("stream not initialized.");
+  }
+  return reactor_->GetBytesPerMinuteQuota();
+}
+
 absl::Status AcsAgentClient::AddRequest(Request& request) {
   absl::Status latest_send_request_status = absl::OkStatus();
   // TODO: Make the retry parameters configurable.

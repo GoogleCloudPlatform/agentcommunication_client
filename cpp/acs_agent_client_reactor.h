@@ -1,6 +1,8 @@
 #ifndef THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_REACTOR_H_
 #define THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_REACTOR_H_
 
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <queue>
 #include <string>
@@ -8,11 +10,14 @@
 #include "proto/agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
+#include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_helper.h"
 #include "grpcpp/client_context.h"
 #include "grpcpp/support/client_callback.h"
 #include "grpcpp/support/status.h"
+#include "grpcpp/support/string_ref.h"
 
 namespace agent_communication {
 
@@ -63,6 +68,14 @@ class AcsAgentClientReactor
       const google::cloud::agentcommunication::v1::StreamAgentMessagesRequest&
           request) ABSL_LOCKS_EXCLUDED(request_mtx_);
 
+  // Returns the quota of (# of messages per minute & # of bytes per minute) for
+  // the agent to send messages to the server. These values are retrieved from
+  // server's initial metadata.
+  absl::StatusOr<uint64_t> GetMessagesPerMinuteQuota()
+      ABSL_LOCKS_EXCLUDED(status_mtx_);
+  absl::StatusOr<uint64_t> GetBytesPerMinuteQuota()
+      ABSL_LOCKS_EXCLUDED(status_mtx_);
+
   // Waits for the RPC termination status.
   // This function will listen to the OnDone callback and return the status.
   grpc::Status Await() ABSL_LOCKS_EXCLUDED(status_mtx_);
@@ -75,12 +88,21 @@ class AcsAgentClientReactor
  private:
   // Override methods of ClientBidiReactor. These methods are called by gRPC
   // framework. OnWriteDone is called when the write operation is done.
-  // OnReadDone is called when the read operation is done. OnDone is called
-  // when the RPC is terminated.
+  // OnReadDone is called when the read operation is done.
+  // OnReadInitialMetadataDone is called when the read initial metadata from
+  // server operation is done. OnDone is called when the RPC is terminated.
   void OnWriteDone(bool ok) ABSL_LOCKS_EXCLUDED(request_mtx_) override;
   void OnReadDone(bool ok) ABSL_LOCKS_EXCLUDED(request_mtx_) override;
+  void OnReadInitialMetadataDone(bool ok)
+      ABSL_LOCKS_EXCLUDED(status_mtx_) override;
   void OnDone(const grpc::Status& status)
       ABSL_LOCKS_EXCLUDED(status_mtx_) override;
+
+  // Gets the integer value of the key from the initial metadata of server.
+  template <typename T>
+  absl::StatusOr<T> GetIntValueFromInitialMetadata(
+      const std::multimap<grpc::string_ref, grpc::string_ref>& metadata,
+      const std::string& key);
 
   // Adds a response to the queue of ack_buffer_. This function will be called
   // when a message with MessageBody type is received from the server in
@@ -116,6 +138,20 @@ class AcsAgentClientReactor
   // function that the RPC has been terminated and it can return the final
   // status.
   bool rpc_done_ ABSL_GUARDED_BY(status_mtx_) = false;
+
+  // Quota of (# of messages per minute & # of bytes per minute) for the agent
+  // to send messages to the server. This value is retrieved from server's
+  // initial metadata.
+  absl::StatusOr<uint64_t> messages_per_minute_quota_ ABSL_GUARDED_BY(
+      status_mtx_) = absl::FailedPreconditionError("stream not initialized.");
+  absl::StatusOr<uint64_t> bytes_per_minute_quota_ ABSL_GUARDED_BY(
+      status_mtx_) = absl::FailedPreconditionError("stream not initialized.");
+
+  // Keys for the quota in the initial metadata of server.
+  inline static constexpr char kMessagesPerMinuteQuotaKey[] =
+      "agent-communication-message-rate-limit";
+  inline static constexpr char kBytesPerMinuteQuotaKey[] =
+      "agent-communication-bandwidth-limit";
 
   // Mutex to protect all variables related to write operations.
   absl::Mutex request_mtx_;

@@ -1,5 +1,6 @@
 #include <chrono>
 #include <functional>
+#include <map>
 #include <memory>
 #include <queue>
 #include <string>
@@ -93,11 +94,22 @@ class FakeAcsAgentServiceImpl final
           read_callback)
       : read_callback_(read_callback) {}
 
+  explicit FakeAcsAgentServiceImpl(
+      std::function<void(
+          google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
+          read_callback,
+      std::multimap<std::string, std::string> initial_metadata)
+      : read_callback_(read_callback), initial_metadata_(initial_metadata) {}
+
   grpc::ServerBidiReactor<
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest,
       google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>*
   StreamAgentMessages(grpc::CallbackServerContext* context)
       ABSL_LOCKS_EXCLUDED(reactor_mtx_) override;
+
+  // Adds initial metadata to the server context. The metadata needs to be
+  // called after the reactor is created, before the reactor writes any message.
+  void AddInitialMetadata(const std::string& key, const std::string& value);
 
   // Adds a response to the buffer of the server reactor.
   void AddResponse(
@@ -114,6 +126,8 @@ class FakeAcsAgentServiceImpl final
   std::function<void(
       google::cloud::agentcommunication::v1::StreamAgentMessagesRequest)>
       read_callback_;
+  std::multimap<std::string, std::string> initial_metadata_
+      ABSL_GUARDED_BY(reactor_mtx_);
 };
 
 // Fake ACS agent server.

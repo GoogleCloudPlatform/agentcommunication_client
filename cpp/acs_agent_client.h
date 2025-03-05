@@ -1,6 +1,7 @@
 #ifndef THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_H_
 #define THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_H_
 
+#include <cstdint>
 #include <future>
 #include <memory>
 #include <queue>
@@ -77,6 +78,15 @@ class AcsAgentClient {
       google::cloud::agentcommunication::v1::MessageBody message_body)
       ABSL_LOCKS_EXCLUDED(request_delivery_status_mtx_)
           ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+
+  // Returns the quota of (# of messages per minute & # of bytes per minute) for
+  // the agent to send messages to the server. Returns error status if not set
+  // by server. User of the agent can use its own throttling mechanism to ensure
+  // the health of the agent and properly handle the resource exhausted error.
+  absl::StatusOr<uint64_t> GetMessagePerMinuteQuota()
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+  absl::StatusOr<uint64_t> GetBytesPerMinuteQuota()
+      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
   // Checks if the client is dead. If the caller of this class has failure of
   // sending or receiving messages, it can call this function to check if the

@@ -87,7 +87,19 @@ FakeAcsAgentServiceImpl::StreamAgentMessages(
   absl::MutexLock lock(&reactor_mtx_);
   reactor_ = new FakeAcsAgentServerReactor(read_callback_);
   context_ = context;
+  for (const auto& [key, value] : initial_metadata_) {
+    context_->AddInitialMetadata(key, value);
+  }
   return reactor_;
+}
+
+void FakeAcsAgentServiceImpl::AddInitialMetadata(const std::string& key,
+                                                 const std::string& value) {
+  absl::MutexLock lock(&reactor_mtx_);
+  if (reactor_ == nullptr) {
+    return;
+  }
+  context_->AddInitialMetadata(key, value);
 }
 
 void FakeAcsAgentServiceImpl::AddResponse(std::unique_ptr<Response> response) {

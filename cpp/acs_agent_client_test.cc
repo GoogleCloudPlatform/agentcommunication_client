@@ -15,6 +15,7 @@
 #include "absl/log/absl_log.h"
 #include "absl/log/globals.h"
 #include "absl/status/status.h"
+#include "absl/status/status_matchers.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
@@ -100,14 +101,17 @@ std::unique_ptr<AcsStub> CreateStub(std::string address) {
 class AcsAgentClientTest : public ::testing::Test {
  protected:
   AcsAgentClientTest()
-      : service_([this](Request request) {
-          // Callback to be invoked in OnReadDone() of the server reactor.
-          absl::MutexLock lock(&custom_server_channel_.mtx);
-          custom_server_channel_.requests.push_back(std::move(request));
-          if (custom_server_channel_.delay_response) {
-            absl::SleepFor(custom_server_channel_.delay_duration);
-          }
-        }),
+      : service_(
+            [this](Request request) {
+              // Callback to be invoked in OnReadDone() of the server reactor.
+              absl::MutexLock lock(&custom_server_channel_.mtx);
+              custom_server_channel_.requests.push_back(std::move(request));
+              if (custom_server_channel_.delay_response) {
+                absl::SleepFor(custom_server_channel_.delay_duration);
+              }
+            },
+            {{"agent-communication-message-rate-limit", "1"},
+             {"agent-communication-bandwidth-limit", "100"}}),
         server_(std::make_unique<FakeAcsAgentServer>(&service_)) {
     absl::SetGlobalVLogLevel(0);
   }
@@ -192,6 +196,14 @@ class AcsAgentClientTest : public ::testing::Test {
 TEST_F(AcsAgentClientTest, TestClientSendMessagesRepeatedlySuccessful) {
   // Make sure server does not delay response.
   SetServerDelay(false, absl::ZeroDuration());
+
+  // Verify that the client can get the message rate limit and bandwidth limit
+  // from the server after the registration request is acknowledged by the
+  // server.
+  EXPECT_THAT((*client_)->GetMessagePerMinuteQuota(),
+              absl_testing::IsOkAndHolds(1));
+  EXPECT_THAT((*client_)->GetBytesPerMinuteQuota(),
+              absl_testing::IsOkAndHolds(100));
 
   // Send 50 messages to the server, expect an OK status.
   for (int i = 0; i < 50; ++i) {
@@ -652,6 +664,14 @@ TEST_F(AcsAgentClientTest, TestFailureToRestartClientAndClientIsDead) {
   // Client will transition to kStreamFailedToInitialize eventually.
   EXPECT_TRUE(WaitUntil([this]() { return (*client_)->IsDead(); },
                         absl::Seconds(20), absl::Seconds(0.1)));
+
+  // client is dead, the quota should not be available.
+  EXPECT_THAT((*client_)->GetMessagePerMinuteQuota(),
+              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                                     "stream not initialized."));
+  EXPECT_THAT((*client_)->GetBytesPerMinuteQuota(),
+              absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
+                                     "stream not initialized."));
 }
 
 }  // namespace
