@@ -48,7 +48,7 @@ import (
 
 const (
 	testChannelID  = "test-channel"
-	testResourceID = "projects/test-project/zones/test-zone/instances/test-instance"
+	testResourceID = "projects/test-project/zones/test-region-zone/instances/test-instance"
 	bufSize        = 1024 * 1024
 
 	metadataMessageRateLimitValue = 100
@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/computeMetadata/v1/instance/zone":
-			fmt.Fprint(w, "test-zone")
+			fmt.Fprint(w, "test-region-zone")
 		case "/computeMetadata/v1/project/numeric-project-id":
 			fmt.Fprint(w, "test-project")
 		case "/computeMetadata/v1/instance/id":
@@ -207,6 +207,37 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 	return srv, cc, nil
 }
 
+func TestGetEndpoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		regional bool
+		want     string
+	}{
+		{
+			name:     "regional endpoint",
+			regional: true,
+			want:     "test-region-agentcommunication.googleapis.com.:443",
+		},
+		{
+			name:     "zonal endpoint",
+			regional: false,
+			want:     "test-region-zone-agentcommunication.googleapis.com.:443",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint, err := getEndpoint(tc.regional)
+			if err != nil {
+				t.Fatalf("getEndpoint(%v) returned an unexpected error: %v", tc.regional, err)
+			}
+			if endpoint != tc.want {
+				t.Errorf("getEndpoint(%v) = %v, want: %v", tc.regional, endpoint, tc.want)
+			}
+		})
+	}
+}
+
 func TestSendAgentMessage(t *testing.T) {
 	ctx := context.Background()
 	_, cc, err := createTestSrv(t)
@@ -271,7 +302,7 @@ func TestNewConnection(t *testing.T) {
 	wantHeaders := map[string][]string{
 		"authentication":                  []string{fmt.Sprintf("Bearer %s", rawToken)},
 		"agent-communication-channel-id":  []string{"test-channel"},
-		"agent-communication-resource-id": []string{"projects/test-project/zones/test-zone/instances/test-instance"},
+		"agent-communication-resource-id": []string{"projects/test-project/zones/test-region-zone/instances/test-instance"},
 	}
 	for k, v := range wantHeaders {
 		if !reflect.DeepEqual(srv.headers.Get(k), v) {
@@ -347,7 +378,7 @@ func TestNewConnectionErrors(t *testing.T) {
 			wantHeaders := map[string][]string{
 				"authentication":                  []string{fmt.Sprintf("Bearer %s", rawToken)},
 				"agent-communication-channel-id":  []string{"test-channel"},
-				"agent-communication-resource-id": []string{"projects/test-project/zones/test-zone/instances/test-instance"},
+				"agent-communication-resource-id": []string{"projects/test-project/zones/test-region-zone/instances/test-instance"},
 			}
 			for k, v := range wantHeaders {
 				if !reflect.DeepEqual(srv.headers.Get(k), v) {

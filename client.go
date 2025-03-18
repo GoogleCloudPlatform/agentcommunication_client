@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,13 @@ var (
 	// ErrGettingInstanceToken is an error indicating that the instance token could not be retrieved.
 	ErrGettingInstanceToken = errors.New("error getting instance token")
 
+	// defaultOpts are the default options for used for creating ACS clients.
+	defaultOpts = []option.ClientOption{
+		option.WithoutAuthentication(), // Do not use oauth.
+		option.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(nil))), // Because we disabled Auth we need to specifically enable TLS.
+		option.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 60 * time.Second, Timeout: 10 * time.Second})),
+	}
+
 	logger *log.Logger
 )
 
@@ -70,30 +78,34 @@ func loggerPrintf(format string, v ...any) {
 	}
 }
 
-// NewClient creates a new agent communication grpc client.
-// Caller must close the returned client when it is done being used to clean up its underlying
-// connections.
-func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
+func getEndpoint(regional bool) (string, error) {
 	zone, err := getZone()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	location := zone
 	if regional {
-		location = location[:len(location)-2]
+		index := strings.LastIndex(location, "-")
+		if index == -1 {
+			return "", fmt.Errorf("zone %q is not a valid zone", zone)
+		}
+		location = location[:index]
 	}
 
-	defaultOpts := []option.ClientOption{
-		option.WithoutAuthentication(), // Do not use oauth.
-		option.WithGRPCDialOption(grpc.WithTransportCredentials(credentials.NewTLS(nil))), // Because we disabled Auth we need to specifically enable TLS.
-		option.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 60 * time.Second, Timeout: 10 * time.Second})),
-		// Use the FQDN to avoid unnecessary DNS lookups.
-		option.WithEndpoint(fmt.Sprintf("%s-agentcommunication.googleapis.com.:443", location)),
-	}
+	return fmt.Sprintf("%s-agentcommunication.googleapis.com.:443", location), nil
+}
 
-	opts = append(defaultOpts, opts...)
-	return agentcommunication.NewClient(ctx, opts...)
+// NewClient creates a new agent communication grpc client.
+// Caller must close the returned client when it is done being used to clean up its underlying
+// connections.
+func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
+	endpoint, err := getEndpoint(regional)
+	if err != nil {
+		return nil, err
+	}
+	optsWithEndpoint := append(defaultOpts, option.WithEndpoint(endpoint))
+	return agentcommunication.NewClient(ctx, append(optsWithEndpoint, opts...)...)
 }
 
 // SendAgentMessage sends a message to the client. This is equivalent to sending a message via
