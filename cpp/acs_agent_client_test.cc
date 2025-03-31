@@ -28,7 +28,6 @@
 #include "grpcpp/create_channel.h"
 #include "grpcpp/security/credentials.h"
 #include "grpcpp/support/channel_arguments.h"
-#include "grpcpp/support/status.h"
 
 // In external googletest, ASSERT_OK is not defined.
 #ifndef ASSERT_OK
@@ -76,6 +75,19 @@ bool WaitUntil(absl::AnyInvocable<bool()> condition, absl::Duration timeout,
     absl::SleepFor(sleep_duration);
   }
   return false;
+}
+
+// The condition is expected to be true always in the duration.
+bool RemainTrue(absl::AnyInvocable<bool()> condition, absl::Duration timeout,
+                absl::Duration sleep_duration) {
+  absl::Time deadline = absl::Now() + timeout;
+  while (absl::Now() < deadline) {
+    if (!condition()) {
+      return false;
+    }
+    absl::SleepFor(sleep_duration);
+  }
+  return true;
 }
 
 // Creates a stub to the ACS Agent Communication service.
@@ -166,8 +178,7 @@ class AcsAgentClientTest : public ::testing::Test {
 
   void TearDown() override {
     ABSL_VLOG(2) << "Shutting down fake server during teardown of tests.";
-    if (client_.ok()) {
-      (*client_)->Shutdown();
+    if (client_.ok() && *client_ != nullptr) {
       *client_ = nullptr;
     }
     std::chrono::system_clock::time_point deadline =
@@ -672,6 +683,26 @@ TEST_F(AcsAgentClientTest, TestFailureToRestartClientAndClientIsDead) {
   EXPECT_THAT((*client_)->GetBytesPerMinuteQuota(),
               absl_testing::StatusIs(absl::StatusCode::kFailedPrecondition,
                                      "stream not initialized."));
+}
+
+TEST_F(AcsAgentClientTest,
+       TestClientDoesNotCrashAfterShutdownWithPendingResponseFromServer) {
+  // Test that the client does not crash and shutdown cleanly after shutdown
+  // with a pending response from the server.
+  SetServerDelay(/*delay_response=*/true, /*delay_duration=*/absl::Seconds(2.1));
+  service_.AddResponse(std::make_unique<Response>());
+  *client_ = nullptr;
+}
+
+TEST_F(AcsAgentClientTest,
+       TestClientDoesNotRestartAfterClientCancelsTheStream) {
+  (*client_)->Shutdown();
+  ASSERT_TRUE(RemainTrue(
+      [&]() {
+        absl::MutexLock lock(&custom_client_channel_.mtx);
+        return (*client_)->IsDead() && custom_client_channel_.responses.empty();
+      },
+      absl::Seconds(3), absl::Seconds(0.1)));
 }
 
 }  // namespace

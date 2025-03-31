@@ -19,7 +19,6 @@
 #include "absl/synchronization/mutex.h"
 #include "cpp/acs_agent_client_reactor.h"
 #include "cpp/acs_agent_helper.h"
-#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 
@@ -164,8 +163,8 @@ class AcsAgentClient {
   void ReactorReadCallback(
       google::cloud::agentcommunication::v1::StreamAgentMessagesResponse
           response,
-      bool ok) ABSL_LOCKS_EXCLUDED(response_read_mtx_)
-      ABSL_LOCKS_EXCLUDED(reactor_mtx_);
+      AcsAgentClientReactor::RpcStatus status)
+      ABSL_LOCKS_EXCLUDED(response_read_mtx_) ABSL_LOCKS_EXCLUDED(reactor_mtx_);
 
   // Acknowledges the Response from the server for a successful delivery of a
   // Request. ACS server normally sends a MessageResponse as an acknowledgement

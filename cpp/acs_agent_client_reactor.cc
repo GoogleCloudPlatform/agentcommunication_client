@@ -40,7 +40,7 @@ using AcsStub =
 
 AcsAgentClientReactor::AcsAgentClientReactor(
     std::unique_ptr<AcsStub> stub,
-    absl::AnyInvocable<void(Response, bool)> read_callback)
+    absl::AnyInvocable<void(Response, RpcStatus)> read_callback)
     : stub_(std::move(stub)), read_callback_(std::move(read_callback)) {
   stub_->async()->StreamAgentMessages(&context_, this);
   StartRead(&response_);
@@ -49,7 +49,7 @@ AcsAgentClientReactor::AcsAgentClientReactor(
 
 AcsAgentClientReactor::AcsAgentClientReactor(
     std::unique_ptr<AcsStub> stub,
-    absl::AnyInvocable<void(Response, bool)> read_callback,
+    absl::AnyInvocable<void(Response, RpcStatus)> read_callback,
     const AgentConnectionId& agent_connection_id)
     : stub_(std::move(stub)), read_callback_(std::move(read_callback)) {
   context_.AddMetadata("authentication", "Bearer " + agent_connection_id.token);
@@ -93,6 +93,7 @@ bool AcsAgentClientReactor::Cancel() {
         << "The RPC has already been terminated when attempting to cancel.";
     return false;
   }
+  rpc_cancelled_by_client_ = true;
   context_.TryCancel();
   return true;
 }
@@ -139,14 +140,21 @@ void AcsAgentClientReactor::Ack(std::string message_id) {
 void AcsAgentClientReactor::OnReadDone(bool ok) {
   if (!ok) {
     ABSL_VLOG(1) << "OnReadDone not ok";
-    read_callback_(Response(), false);
+    {
+      absl::MutexLock lock(&status_mtx_);
+      if (rpc_cancelled_by_client_) {
+        read_callback_(Response(), RpcStatus::kRpcClosedByClient);
+        return;
+      }
+    }
+    read_callback_(Response(), RpcStatus::kRpcClosedByServer);
     return;
   }
   if (response_.has_message_body()) {
     ABSL_VLOG(1) << "Client Ack on message with id: " << response_.message_id();
     Ack(response_.message_id());
   }
-  read_callback_(std::move(response_), true);
+  read_callback_(std::move(response_), RpcStatus::kRpcOk);
   StartRead(&response_);
 }
 

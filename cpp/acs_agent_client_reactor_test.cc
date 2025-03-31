@@ -149,8 +149,10 @@ TEST_F(AcsAgentClientReactorTest, TestAddRequest) {
   std::promise<Response> response_promise;
   std::future<Response> response_future = response_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [&response_promise](Response response, bool ok) {
-        if (ok) {
+      std::move(stub_),
+      [&response_promise](Response response,
+                          AcsAgentClientReactor::RpcStatus status) {
+        if (status == AcsAgentClientReactor::RpcStatus::kRpcOk) {
           response_promise.set_value(std::move(response));
         }
       });
@@ -189,8 +191,10 @@ TEST_F(AcsAgentClientReactorTest, TestOnReadSuccessfully) {
   std::promise<Response> response_promise;
   std::future<Response> response_future = response_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [&response_promise](Response response, bool ok) {
-        if (ok) {
+      std::move(stub_),
+      [&response_promise](Response response,
+                          AcsAgentClientReactor::RpcStatus status) {
+        if (status == AcsAgentClientReactor::RpcStatus::kRpcOk) {
           response_promise.set_value(std::move(response));
         }
       });
@@ -225,9 +229,16 @@ TEST_F(AcsAgentClientReactorTest, TestOnReadSuccessfully) {
 // Tests the functionality of Await() of client when rpc is terminated by the
 // server shutdown.
 TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
-  // Create a client reactor with a read callback to do nothing.
+  // Create a client reactor with a read callback to collect the RpcStatus.
+  std::promise<AcsAgentClientReactor::RpcStatus> rpc_status_promise;
+  std::future<AcsAgentClientReactor::RpcStatus> rpc_status_future =
+      rpc_status_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_),
+      [&rpc_status_promise](Response /*response*/,
+                            AcsAgentClientReactor::RpcStatus status) {
+        rpc_status_promise.set_value(status);
+      });
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_VLOG(2) << "Setup done";
@@ -252,15 +263,25 @@ TEST_F(AcsAgentClientReactorTest, TestAwaitOnServerShutdown) {
   grpc::Status status_value = status_future.get();
   EXPECT_EQ(status_value.error_code(), grpc::StatusCode::UNAVAILABLE);
 
+  AcsAgentClientReactor::RpcStatus rpc_status = rpc_status_future.get();
+  EXPECT_EQ(rpc_status, AcsAgentClientReactor::RpcStatus::kRpcClosedByServer);
+
   await_thread.join();
 }
 
 // Tests the functionality of Cancel() of client and Await() would be able to
 // capture the right status.
 TEST_F(AcsAgentClientReactorTest, TestCancel) {
-  // Create a client reactor with a read callback to do nothing.
+  // Create a client reactor with a read callback to collect the RpcStatus.
+  std::promise<AcsAgentClientReactor::RpcStatus> rpc_status_promise;
+  std::future<AcsAgentClientReactor::RpcStatus> rpc_status_future =
+      rpc_status_promise.get_future();
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_),
+      [&rpc_status_promise](Response /*response*/,
+                            AcsAgentClientReactor::RpcStatus status) {
+        rpc_status_promise.set_value(status);
+      });
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_LOG(INFO) << "Setup done";
@@ -279,13 +300,18 @@ TEST_F(AcsAgentClientReactorTest, TestCancel) {
   ASSERT_EQ(status, std::future_status::ready);
   grpc::Status status_value = status_future.get();
   EXPECT_EQ(status_value.error_code(), grpc::StatusCode::CANCELLED);
+
+  AcsAgentClientReactor::RpcStatus rpc_status = rpc_status_future.get();
+  EXPECT_EQ(rpc_status, AcsAgentClientReactor::RpcStatus::kRpcClosedByClient);
+
   await_thread.join();
 }
 
 TEST_F(AcsAgentClientReactorTest, TestReactorCanInitializeQuota) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_),
+      [](Response /*response*/, AcsAgentClientReactor::RpcStatus /*ok*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   // Add initial metadata to the server after the reactor is created, before the
@@ -314,7 +340,8 @@ TEST_F(AcsAgentClientReactorTest,
        TestReactorCanInitializeQuotaWithMultipleMetadataWithSameKey) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_),
+      [](Response /*response*/, AcsAgentClientReactor::RpcStatus /*ok*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   // Add initial metadata to the server after the reactor is created, before the
@@ -348,7 +375,8 @@ TEST_F(AcsAgentClientReactorTest,
        TestReactorCanInitializeQuotaWithInvalidMetadata) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_), [](Response /*response*/,
+                           AcsAgentClientReactor::RpcStatus /*status*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   service_.AddInitialMetadata("agent-communication-message-rate-limit", "a");
@@ -379,7 +407,8 @@ TEST_F(AcsAgentClientReactorTest,
        TestReactorCanInitializeQuotaWithEmptyMetadata) {
   // Create a client reactor with a read callback to do nothing.
   reactor_ = std::make_unique<AcsAgentClientReactor>(
-      std::move(stub_), [](Response /*response*/, bool /*ok*/) {});
+      std::move(stub_), [](Response /*response*/,
+                           AcsAgentClientReactor::RpcStatus /*status*/) {});
   ASSERT_TRUE(WaitUntil([this]() { return service_.IsReactorCreated(); },
                         absl::Seconds(10)));
   ABSL_LOG(INFO) << "Setup done";

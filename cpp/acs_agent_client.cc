@@ -318,12 +318,21 @@ void AcsAgentClient::ClientReadMessage() {
   }
 }
 
-void AcsAgentClient::ReactorReadCallback(Response response, bool ok) {
-  if (!ok) {
-    ABSL_VLOG(1) << "ReactorReadCallback not ok";
+void AcsAgentClient::ReactorReadCallback(
+    Response response, AcsAgentClientReactor::RpcStatus status) {
+  if (status == AcsAgentClientReactor::RpcStatus::kRpcClosedByClient) {
+    ABSL_VLOG(1) << "RPC is closed by client, don't restart the stream.";
+    return;
+  }
+  if (status == AcsAgentClientReactor::RpcStatus::kRpcClosedByServer) {
+    ABSL_VLOG(1) << "RPC is closed by server, restarting the stream.";
     // Wakes up RestartReactor() to restart the stream.
     absl::MutexLock lock(&reactor_mtx_);
-    stream_state_ = ClientState::kStreamTemporarilyDown;
+    if (stream_state_ != ClientState::kShutdown) {
+      // If the stream is being shutdown by client, ie. stream_state_ is
+      // kShutdown, we should not restart the stream.
+      stream_state_ = ClientState::kStreamTemporarilyDown;
+    }
     return;
   }
   // Wake up ClientReadMessage().
@@ -504,10 +513,9 @@ void AcsAgentClient::Shutdown() {
     restart_client_thread_.join();
   }
   {
-    // Don't call reactor_Await() here as it will block the thread.
     absl::MutexLock lock(&reactor_mtx_);
     if (reactor_ != nullptr) {
-      reactor_->Cancel();
+      reactor_ = nullptr;
     }
   }
 }

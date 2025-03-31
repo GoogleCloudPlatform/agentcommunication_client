@@ -35,6 +35,14 @@ class AcsAgentClientReactor
           google::cloud::agentcommunication::v1::StreamAgentMessagesRequest,
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse> {
  public:
+  // Status of the RPC to be passed to the read_callback_ to let the caller know
+  // the status of the RPC.
+  enum class RpcStatus {
+    kRpcOk,  // Rpc is normal.
+    kRpcClosedByClient,  // The RPC is force cancelled by the client.
+    kRpcClosedByServer,  // The RPC is being terminated by the server.
+  };
+
   // Test only constructor to create client locally without connecting through a
   // channel to a real ACS server.
   explicit AcsAgentClientReactor(
@@ -43,7 +51,7 @@ class AcsAgentClientReactor
           stub,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
-          bool)>
+          RpcStatus)>
           read_callback);
 
   explicit AcsAgentClientReactor(
@@ -52,7 +60,7 @@ class AcsAgentClientReactor
           stub,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
-          bool)>
+          RpcStatus)>
           read_callback,
       const AgentConnectionId& agent_connection_id);
 
@@ -92,7 +100,8 @@ class AcsAgentClientReactor
   // OnReadInitialMetadataDone is called when the read initial metadata from
   // server operation is done. OnDone is called when the RPC is terminated.
   void OnWriteDone(bool ok) ABSL_LOCKS_EXCLUDED(request_mtx_) override;
-  void OnReadDone(bool ok) ABSL_LOCKS_EXCLUDED(request_mtx_) override;
+  void OnReadDone(bool ok) ABSL_LOCKS_EXCLUDED(request_mtx_)
+      ABSL_LOCKS_EXCLUDED(status_mtx_) override;
   void OnReadInitialMetadataDone(bool ok)
       ABSL_LOCKS_EXCLUDED(status_mtx_) override;
   void OnDone(const grpc::Status& status)
@@ -124,7 +133,8 @@ class AcsAgentClientReactor
   // Injected during construction to allow the caller of this class to
   // control how to process the messages from the server.
   absl::AnyInvocable<void(
-      google::cloud::agentcommunication::v1::StreamAgentMessagesResponse, bool)>
+      google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
+      RpcStatus)>
       read_callback_;
   // Buffer to store the response in StartRead.
   google::cloud::agentcommunication::v1::StreamAgentMessagesResponse response_;
@@ -138,6 +148,11 @@ class AcsAgentClientReactor
   // function that the RPC has been terminated and it can return the final
   // status.
   bool rpc_done_ ABSL_GUARDED_BY(status_mtx_) = false;
+
+  // Whether the RPC has been cancelled forcefully by Cancel().
+  // This is to indicate to the read_callback_ that the RPC has been
+  // cancelled by the user/client.
+  bool rpc_cancelled_by_client_ ABSL_GUARDED_BY(status_mtx_) = false;
 
   // Quota of (# of messages per minute & # of bytes per minute) for the agent
   // to send messages to the server. This value is retrieved from server's
