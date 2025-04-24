@@ -48,8 +48,7 @@ constexpr absl::string_view kAcsTokenEndpointGce =
 
 // TODO: b/384093718 - Update the endpoint once the token endpoint is finalized.
 constexpr absl::string_view kAcsTokenEndpointGke =
-    "instance/gke/agent-communication-service/ncclmetrics-token/"
-    "identity?audience=agentcommunication.googleapis.com&format=full";
+    "instance/gke/agent-communication-service/ncclmetrics-token";
 
 // Internal helper struct to hold the ACS token and the parsed values from the
 // token.
