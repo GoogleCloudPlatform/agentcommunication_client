@@ -176,7 +176,7 @@ template <typename T>
 absl::StatusOr<T> AcsAgentClientReactor::GetIntValueFromInitialMetadata(
     const std::multimap<grpc::string_ref, grpc::string_ref>& metadata,
     const std::string& key) {
-  if (!metadata.contains(key)) {
+  if (metadata.count(key) == 0) {
     return absl::NotFoundError(absl::StrCat(
         "The key: ", key, " was not found in initial metadata from server."));
   }
