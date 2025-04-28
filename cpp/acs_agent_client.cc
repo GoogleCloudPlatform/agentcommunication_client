@@ -43,11 +43,11 @@ using AcsStub =
     ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
-    bool endpoint_regional,
-    std::string channel_id,
+    bool endpoint_regional, std::string channel_id,
     absl::AnyInvocable<void(
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
-        read_callback) {
+        read_callback,
+    std::chrono::seconds max_wait_time_for_ack) {
   // Generate the connection id.
   absl::StatusOr<AgentConnectionId> agent_connection_id =
       GenerateAgentConnectionId(std::move(channel_id), endpoint_regional);
@@ -58,7 +58,8 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
   std::unique_ptr<AcsStub> stub =
       AcsAgentClientReactor::CreateStub(agent_connection_id->endpoint);
   return Create(std::move(stub), *std::move(agent_connection_id),
-                std::move(read_callback), nullptr, nullptr);
+                std::move(read_callback), nullptr, nullptr,
+                max_wait_time_for_ack);
 }
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
@@ -71,11 +72,12 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
         read_callback,
     absl::AnyInvocable<std::unique_ptr<AcsStub>()> stub_generator,
     absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
-        connection_id_generator) {
+        connection_id_generator,
+    std::chrono::seconds max_wait_time_for_ack) {
   // Create the client.
   std::unique_ptr<AcsAgentClient> client = absl::WrapUnique(new AcsAgentClient(
       agent_connection_id, std::move(read_callback), std::move(stub_generator),
-      std::move(connection_id_generator)));
+      std::move(connection_id_generator), max_wait_time_for_ack));
 
   // Start the read message thread.
   std::thread read_message_body_thread(
@@ -253,7 +255,7 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
 
   // Now that we have added the request to the reactor, wait for the response
   // from the server.
-  std::future_status status = responseFuture.wait_for(std::chrono::seconds(2));
+  std::future_status status = responseFuture.wait_for(max_wait_time_for_ack_);
   absl::Status received_status = absl::OkStatus();
   if (status == std::future_status::ready) {
     received_status = responseFuture.get();
@@ -372,7 +374,7 @@ absl::Status AcsAgentClient::RegisterConnection(const Request& request) {
   // acquire the reactor_mtx_ lock until the wait here is done. This is fine
   // for now, because this function will still return a failed status, and wait
   // for the caller of this class to retry.
-  std::future_status status = responseFuture.wait_for(std::chrono::seconds(2));
+  std::future_status status = responseFuture.wait_for(max_wait_time_for_ack_);
   absl::Status received_status = absl::OkStatus();
   if (status == std::future_status::ready) {
     received_status = responseFuture.get();

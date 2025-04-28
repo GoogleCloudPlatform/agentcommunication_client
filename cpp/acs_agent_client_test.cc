@@ -33,6 +33,12 @@
 #ifndef ASSERT_OK
 #define ASSERT_OK(x) ASSERT_TRUE(x.ok());
 #endif
+#ifndef ASSERT_OK_AND_ASSIGN
+#define ASSERT_OK_AND_ASSIGN(lhs, rexpr) \
+  auto statusor = (rexpr);               \
+  ASSERT_OK(statusor);                   \
+  lhs = std::move(*statusor);
+#endif
 
 namespace agent_communication {
 namespace {
@@ -300,6 +306,52 @@ TEST_F(AcsAgentClientTest, TestSendMessageTimeout) {
     custom_client_channel_.responses.clear();
     custom_server_channel_.requests.clear();
   }
+}
+
+TEST_F(AcsAgentClientTest, TestSendMessageFailsAfterConfiguredTimeout) {
+  // Create a new client with a configured timeout of 1 second.
+  std::unique_ptr<AcsStub> stub = CreateStub(server_->GetServerAddress());
+  ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<AcsAgentClient> client,
+      AcsAgentClient::Create(
+          std::move(stub), AgentConnectionId(),
+          /*read_callback=*/[](Response) {},
+          /*stub_generator=*/
+          [address = server_->GetServerAddress()]() {
+            return CreateStub(address);
+          },
+          /*connection_id_generator=*/[]() { return AgentConnectionId(); },
+          /*max_wait_time_for_ack=*/std::chrono::seconds(1)));
+
+  // Make sure the server delays the response for more than the configured
+  // timeout.
+  SetServerDelay(true, absl::Seconds(2));
+
+  // Send a message to the server, expect timeout status.
+  MessageBody message_body;
+  message_body.mutable_body()->set_value("hello_world");
+  absl::Status send_message_status = client->SendMessage(message_body);
+  EXPECT_EQ(send_message_status.code(), absl::StatusCode::kDeadlineExceeded);
+}
+
+TEST_F(AcsAgentClientTest, TestCreatingClientFailsAfterConfiguredTimeout) {
+  // Make sure the server delays the response for more than the configured
+  // timeout.
+  SetServerDelay(true, absl::Seconds(2));
+
+  // Create a new client with a configured timeout of 1 second.
+  std::unique_ptr<AcsStub> stub = CreateStub(server_->GetServerAddress());
+  EXPECT_THAT(
+      AcsAgentClient::Create(
+          std::move(stub), AgentConnectionId(),
+          /*read_callback=*/[](Response) {},
+          /*stub_generator=*/
+          [address = server_->GetServerAddress()]() {
+            return CreateStub(address);
+          },
+          /*connection_id_generator=*/[]() { return AgentConnectionId(); },
+          /*max_wait_time_for_ack=*/std::chrono::seconds(1)),
+      absl_testing::StatusIs(absl::StatusCode::kDeadlineExceeded));
 }
 
 TEST_F(AcsAgentClientTest, TestClientReadMessagesRepeatedlySuccessful) {

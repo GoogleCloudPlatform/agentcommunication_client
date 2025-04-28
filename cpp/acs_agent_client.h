@@ -1,6 +1,7 @@
 #ifndef THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_H_
 #define THIRD_PARTY_AGENTCOMMUNICATION_CLIENT_CPP_ACS_AGENT_CLIENT_H_
 
+#include <chrono>
 #include <cstdint>
 #include <future>
 #include <memory>
@@ -33,15 +34,17 @@ namespace agent_communication {
 // process the response from the server during the creation of this class.
 class AcsAgentClient {
  public:
+  constexpr static std::chrono::seconds kDefaultMaxWaitTimeForAck =
+      std::chrono::seconds(2);
   // Factory method to create a client. User only needs to supply the channel id
   // and the boolean to indicate if the endpoint is regional, without needing to
   // supply the whole connection id.
   static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
-      bool endpoint_regional,
-      std::string channel_id,
+      bool endpoint_regional, std::string channel_id,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
-          read_callback);
+          read_callback,
+      std::chrono::seconds max_wait_time_for_ack = kDefaultMaxWaitTimeForAck);
 
   // Factory method to create a client.
   static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
@@ -56,7 +59,8 @@ class AcsAgentClient {
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
-          connection_id_generator);
+          connection_id_generator,
+      std::chrono::seconds max_wait_time_for_ack = kDefaultMaxWaitTimeForAck);
 
   // Sends a StreamAgentMessagesRequest to the server.
   // It will automatically retry if the request was not acknowledged by the
@@ -112,11 +116,13 @@ class AcsAgentClient {
           google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
-          connection_id_generator)
+          connection_id_generator,
+      std::chrono::seconds max_wait_time_for_ack)
       : connection_id_(std::move(connection_id)),
         stub_generator_(std::move(stub_generator)),
         connection_id_generator_(std::move(connection_id_generator)),
-        read_callback_(std::move(read_callback)) {}
+        read_callback_(std::move(read_callback)),
+        max_wait_time_for_ack_(max_wait_time_for_ack) {}
 
   // Initializes the client by registering the connection.
   absl::Status Init() ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_)
@@ -278,6 +284,9 @@ class AcsAgentClient {
   // Buffer to store the Response read from OnReadDone of reactor.
   std::queue<google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
       msg_responses_ ABSL_GUARDED_BY(response_read_mtx_);
+
+  // Maximum time to wait for the acknowledgement from server.
+  const std::chrono::seconds max_wait_time_for_ack_;
 };
 
 }  // namespace agent_communication
