@@ -47,7 +47,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     absl::AnyInvocable<void(
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
         read_callback,
-    std::chrono::seconds max_wait_time_for_ack) {
+    std::chrono::milliseconds max_wait_time_for_ack) {
   // Generate the connection id.
   absl::StatusOr<AgentConnectionId> agent_connection_id =
       GenerateAgentConnectionId(std::move(channel_id), endpoint_regional);
@@ -73,7 +73,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     absl::AnyInvocable<std::unique_ptr<AcsStub>()> stub_generator,
     absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
         connection_id_generator,
-    std::chrono::seconds max_wait_time_for_ack) {
+    std::chrono::milliseconds max_wait_time_for_ack) {
   // Create the client.
   std::unique_ptr<AcsAgentClient> client = absl::WrapUnique(new AcsAgentClient(
       agent_connection_id, std::move(read_callback), std::move(stub_generator),

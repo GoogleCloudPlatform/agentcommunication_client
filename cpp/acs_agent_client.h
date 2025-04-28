@@ -34,8 +34,8 @@ namespace agent_communication {
 // process the response from the server during the creation of this class.
 class AcsAgentClient {
  public:
-  constexpr static std::chrono::seconds kDefaultMaxWaitTimeForAck =
-      std::chrono::seconds(2);
+  constexpr static std::chrono::milliseconds kDefaultMaxWaitTimeForAck =
+      std::chrono::milliseconds(2'000);
   // Factory method to create a client. User only needs to supply the channel id
   // and the boolean to indicate if the endpoint is regional, without needing to
   // supply the whole connection id.
@@ -44,7 +44,8 @@ class AcsAgentClient {
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
           read_callback,
-      std::chrono::seconds max_wait_time_for_ack = kDefaultMaxWaitTimeForAck);
+      std::chrono::milliseconds max_wait_time_for_ack =
+          kDefaultMaxWaitTimeForAck);
 
   // Factory method to create a client.
   static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
@@ -60,7 +61,8 @@ class AcsAgentClient {
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
           connection_id_generator,
-      std::chrono::seconds max_wait_time_for_ack = kDefaultMaxWaitTimeForAck);
+      std::chrono::milliseconds max_wait_time_for_ack =
+          kDefaultMaxWaitTimeForAck);
 
   // Sends a StreamAgentMessagesRequest to the server.
   // It will automatically retry if the request was not acknowledged by the
@@ -117,7 +119,7 @@ class AcsAgentClient {
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
           connection_id_generator,
-      std::chrono::seconds max_wait_time_for_ack)
+      std::chrono::milliseconds max_wait_time_for_ack)
       : connection_id_(std::move(connection_id)),
         stub_generator_(std::move(stub_generator)),
         connection_id_generator_(std::move(connection_id_generator)),
@@ -286,7 +288,7 @@ class AcsAgentClient {
       msg_responses_ ABSL_GUARDED_BY(response_read_mtx_);
 
   // Maximum time to wait for the acknowledgement from server.
-  const std::chrono::seconds max_wait_time_for_ack_;
+  const std::chrono::milliseconds max_wait_time_for_ack_;
 };
 
 }  // namespace agent_communication

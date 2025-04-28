@@ -321,7 +321,7 @@ TEST_F(AcsAgentClientTest, TestSendMessageFailsAfterConfiguredTimeout) {
             return CreateStub(address);
           },
           /*connection_id_generator=*/[]() { return AgentConnectionId(); },
-          /*max_wait_time_for_ack=*/std::chrono::seconds(1)));
+          /*max_wait_time_for_ack=*/std::chrono::milliseconds(1'000)));
 
   // Make sure the server delays the response for more than the configured
   // timeout.
@@ -350,7 +350,7 @@ TEST_F(AcsAgentClientTest, TestCreatingClientFailsAfterConfiguredTimeout) {
             return CreateStub(address);
           },
           /*connection_id_generator=*/[]() { return AgentConnectionId(); },
-          /*max_wait_time_for_ack=*/std::chrono::seconds(1)),
+          /*max_wait_time_for_ack=*/std::chrono::milliseconds(1'000)),
       absl_testing::StatusIs(absl::StatusCode::kDeadlineExceeded));
 }
 
