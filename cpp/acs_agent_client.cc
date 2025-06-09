@@ -514,12 +514,15 @@ void AcsAgentClient::Shutdown() {
     }
     restart_client_thread_.join();
   }
+
+  // Move the reactor to a local variable and delete it outside of the critical
+  // section to avoid holding the lock while waiting for the RPC to terminate.
+  std::unique_ptr<AcsAgentClientReactor> reactor_to_delete;
   {
     absl::MutexLock lock(&reactor_mtx_);
-    if (reactor_ != nullptr) {
-      reactor_ = nullptr;
-    }
+    reactor_to_delete = std::move(reactor_);
   }
+  reactor_to_delete = nullptr;
 }
 
 std::string AcsAgentClient::CreateMessageUuid() {

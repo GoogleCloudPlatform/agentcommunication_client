@@ -757,5 +757,13 @@ TEST_F(AcsAgentClientTest,
       absl::Seconds(3), absl::Seconds(0.1)));
 }
 
+TEST_F(AcsAgentClientTest,
+       TestClientCanShutdownCleanlyAfterServerCancelsTheStream) {
+  std::thread t([&]() { (*client_)->Shutdown(); });
+  server_->Shutdown(std::chrono::system_clock::now());
+  server_->Wait();
+  t.join();
+}
+
 }  // namespace
 }  // namespace agent_communication
