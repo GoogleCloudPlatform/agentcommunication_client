@@ -16,10 +16,10 @@ syntax = "proto3";
 
 package google.cloud.agentcommunication.v1;
 
-import "google/api/client.proto";
-import "google/api/field_behavior.proto";
+import "client.proto";
+import "field_behavior.proto";
 import "google/protobuf/any.proto";
-import "google/rpc/status.proto";
+import "status.proto";
 
 option csharp_namespace = "Google.Cloud.AgentCommunication.V1";
 option go_package = "cloud.google.com/go/agentcommunication/apiv1/agentcommunicationpb;agentcommunicationpb";
