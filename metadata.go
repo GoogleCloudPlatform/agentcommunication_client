@@ -31,35 +31,62 @@ const (
 	identityTokenPath = "instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full"
 )
 
-type cachedValue struct {
-	k      string
-	v      string
-	parser func(string) string
-	sync.Mutex
-}
-
 var (
-	zone    = &cachedValue{k: "instance/zone", parser: func(v string) string { return v[strings.LastIndex(v, "/")+1:] }}
-	projNum = &cachedValue{k: "project/numeric-project-id"}
-	instID  = &cachedValue{k: "instance/id"}
-	idToken = &cachedIDToken{}
+	metadataInitOnce sync.Once
+	metadataInit     = func() {
+		z, r, tokenGetter, err := MetadataInitFunc()
+		if err != nil {
+			loggerPrintf("Failed to initialize metadata: %v", err)
+			return
+		}
+		zone = z
+		resourceID = r
+		idToken = &cachedIDToken{tokenGetter: tokenGetter}
+	}
+	// MetadataInitFunc is a function that initializes the metadata. If not set, the metadata will be
+	// initialized for GCE.
+	MetadataInitFunc func() (string, string, func() (string, error), error) = initGCEMetadata
+
+	zone       string
+	resourceID string
+	idToken    *cachedIDToken
 )
 
-func (c *cachedValue) get() (string, error) {
-	c.Lock()
-	defer c.Unlock()
-	if c.v != "" {
-		return c.v, nil
+func initGCEMetadata() (string, string, func() (string, error), error) {
+	loggerPrintf("Running in GCE")
+	zone, err := getGCEZone()
+	if err != nil {
+		return "", "", nil, err
 	}
-	var err error
-	c.v, err = metadata.Get(c.k)
+	resourceID, err := getGCEResourceID(zone)
+	if err != nil {
+		return "", "", nil, err
+	}
+	tokenGetter := func() (string, error) { return metadata.Get(identityTokenPath) }
+
+	return zone, resourceID, tokenGetter, nil
+}
+
+func getGCEZone() (string, error) {
+	zone, err := metadata.Get("instance/zone")
 	if err != nil {
 		return "", err
 	}
-	if c.parser != nil {
-		c.v = c.parser(c.v)
+
+	return zone[strings.LastIndex(zone, "/")+1:], nil
+}
+
+func getGCEResourceID(zone string) (string, error) {
+	projectNum, err := metadata.Get("project/numeric-project-id")
+	if err != nil {
+		return "", err
 	}
-	return c.v, nil
+	instanceID, err := metadata.Get("instance/id")
+	if err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID), nil
 }
 
 type claimSet struct {
@@ -82,15 +109,19 @@ func decodeTokenExpiry(payload string) (int64, error) {
 }
 
 type cachedIDToken struct {
-	expTime *time.Time
-	raw     string
+	expTime     *time.Time
+	raw         string
+	tokenGetter func() (string, error)
 	sync.Mutex
 }
 
 func (t *cachedIDToken) get() error {
-	data, err := metadata.Get(identityTokenPath)
+	if t.tokenGetter == nil {
+		return errors.New("no token getter set")
+	}
+	data, err := t.tokenGetter()
 	if err != nil {
-		return fmt.Errorf("error getting token from metadata: %w", err)
+		return err
 	}
 
 	exp, err := decodeTokenExpiry(data)
@@ -117,32 +148,4 @@ func getIdentityToken() (string, error) {
 	}
 
 	return idToken.raw, nil
-}
-
-func getZone() (string, error) {
-	return zone.get()
-}
-
-func getProjectNumber() (string, error) {
-	return projNum.get()
-}
-
-func getInstanceID() (string, error) {
-	return instID.get()
-}
-
-func getResourceID() (string, error) {
-	zone, err := getZone()
-	if err != nil {
-		return "", err
-	}
-	projectNum, err := getProjectNumber()
-	if err != nil {
-		return "", err
-	}
-	instanceID, err := getInstanceID()
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID), nil
 }

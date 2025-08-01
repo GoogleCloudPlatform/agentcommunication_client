@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -173,7 +174,19 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 }
 
 func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessageRequest) (*acpb.SendAgentMessageResponse, error) {
-	return &acpb.SendAgentMessageResponse{MessageBody: req.GetMessageBody()}, nil
+	md, _ := metadata.FromIncomingContext(ctx)
+	log.Printf("SendAgentMessage: %v\n", md)
+	labels := req.GetMessageBody().GetLabels()
+	for k, v := range md {
+		if slices.Contains([]string{"authentication", "agent-communication-channel-id", "agent-communication-resource-id"}, k) {
+			labels[k] = v[0]
+		}
+	}
+	body := &acpb.MessageBody{
+		Labels: labels,
+		Body:   req.GetMessageBody().GetBody(),
+	}
+	return &acpb.SendAgentMessageResponse{MessageBody: body}, nil
 }
 
 func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
@@ -195,7 +208,7 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 	// Give goroutine enough time to start
 	<-started
 
-	var bufDialer = func(context.Context, string) (net.Conn, error) {
+	bufDialer := func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
 
@@ -227,6 +240,7 @@ func TestGetEndpoint(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			zone = "test-region-zone"
 			endpoint, err := getEndpoint(tc.regional)
 			if err != nil {
 				t.Fatalf("getEndpoint(%v) returned an unexpected error: %v", tc.regional, err)
@@ -256,13 +270,70 @@ func TestSendAgentMessage(t *testing.T) {
 		t.Fatalf("SendAgentMessage returned an unexpected error: %v", err)
 	}
 
-	want := &acpb.SendAgentMessageResponse{MessageBody: msg}
+	labels := msg.GetLabels()
+	labels["authentication"] = "Bearer " + rawToken
+	labels["agent-communication-channel-id"] = testChannelID
+	labels["agent-communication-resource-id"] = testResourceID
+	want := &acpb.SendAgentMessageResponse{MessageBody: &acpb.MessageBody{
+		Labels: labels,
+		Body:   msg.GetBody(),
+	}}
 	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
 		t.Errorf("SendAgentMessage returned an unexpected diff (-want +got): %v", diff)
 	}
 }
 
+func TestMetadataInit(t *testing.T) {
+	ctx := context.Background()
+	_, cc, err := createTestSrv(t)
+	if err != nil {
+		t.Fatalf("createTestCC() failed: %v", err)
+	}
+	zone = ""
+	resourceID = ""
+	idToken = nil
+	MetadataInitFunc = func() (string, string, func() (string, error), error) {
+		return "custom-region-zone", "custom-resource-id", func() (string, error) { return rawToken, nil }, nil
+	}
+	metadataInit()
+	defer func() {
+		MetadataInitFunc = initGCEMetadata
+		metadataInit()
+	}()
+
+	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+	got, err := SendAgentMessage(ctx, testChannelID, client, msg)
+	if err != nil {
+		t.Fatalf("SendAgentMessage returned an unexpected error: %v", err)
+	}
+
+	labels := msg.GetLabels()
+	labels["authentication"] = "Bearer " + rawToken
+	labels["agent-communication-channel-id"] = testChannelID
+	labels["agent-communication-resource-id"] = "custom-resource-id"
+	want := &acpb.SendAgentMessageResponse{MessageBody: &acpb.MessageBody{
+		Labels: labels,
+		Body:   msg.GetBody(),
+	}}
+	if diff := cmp.Diff(want, got, protocmp.Transform()); diff != "" {
+		t.Errorf("SendAgentMessage returned an unexpected diff (-want +got): %v", diff)
+	}
+	ep, err := getEndpoint(false)
+	if err != nil {
+		t.Fatalf("getEndpoint returned an unexpected error: %v", err)
+	}
+	if ep != "custom-region-zone-agentcommunication.googleapis.com.:443" {
+		t.Errorf("getEndpoint returned an unexpected endpoint: %v", ep)
+	}
+}
+
 func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection, error) {
+	metadataInitOnce = sync.Once{}
 	srv, cc, err := createTestSrv(t)
 	if err != nil {
 		t.Fatalf("createTestSrv() failed: %v", err)
@@ -466,7 +537,7 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 
 			// Should wait for reconnect.
 			msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
-			var sendErr = make(chan error)
+			sendErr := make(chan error)
 			go func() {
 				sendErr <- conn.SendMessage(msg)
 			}()
@@ -531,7 +602,7 @@ func TestClose(t *testing.T) {
 		}
 	}()
 
-	var bufDialer = func(context.Context, string) (net.Conn, error) {
+	bufDialer := func(context.Context, string) (net.Conn, error) {
 		return lis.Dial()
 	}
 

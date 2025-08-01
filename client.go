@@ -79,11 +79,6 @@ func loggerPrintf(format string, v ...any) {
 }
 
 func getEndpoint(regional bool) (string, error) {
-	zone, err := getZone()
-	if err != nil {
-		return "", err
-	}
-
 	location := zone
 	if regional {
 		index := strings.LastIndex(location, "-")
@@ -100,6 +95,8 @@ func getEndpoint(regional bool) (string, error) {
 // Caller must close the returned client when it is done being used to clean up its underlying
 // connections.
 func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
+	metadataInitOnce.Do(metadataInit)
+
 	endpoint, err := getEndpoint(regional)
 	if err != nil {
 		return nil, err
@@ -111,12 +108,9 @@ func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) 
 // SendAgentMessage sends a message to the client. This is equivalent to sending a message via
 // StreamAgentMessages with a single message and waiting for the response.
 func SendAgentMessage(ctx context.Context, channelID string, client *agentcommunication.Client, msg *acpb.MessageBody) (*acpb.SendAgentMessageResponse, error) {
-	loggerPrintf("SendAgentMessage")
-	resourceID, err := getResourceID()
-	if err != nil {
-		return nil, err
-	}
+	metadataInitOnce.Do(metadataInit)
 
+	loggerPrintf("SendAgentMessage")
 	token, err := getIdentityToken()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrGettingInstanceToken, err)
@@ -591,6 +585,8 @@ func (c *Connection) createStream(ctx context.Context) error {
 // the connection to be closed automatically. The passed in client will not be closed and can be
 // reused.
 func NewConnection(ctx context.Context, channelID string, client *agentcommunication.Client) (*Connection, error) {
+	metadataInitOnce.Do(metadataInit)
+
 	conn := &Connection{
 		channelID:           channelID,
 		closed:              make(chan struct{}),
@@ -603,12 +599,7 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 		callerManagedClient: true,
 	}
 
-	var err error
-	conn.resourceID, err = getResourceID()
-	if err != nil {
-		return nil, err
-	}
-
+	conn.resourceID = resourceID
 	if err := conn.createStream(ctx); err != nil {
 		conn.close(err)
 		return nil, err
@@ -620,6 +611,8 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 // CreateConnection creates a new connection.
 // DEPRECATED: Use NewConnection instead.
 func CreateConnection(ctx context.Context, channelID string, regional bool, opts ...option.ClientOption) (*Connection, error) {
+	metadataInitOnce.Do(metadataInit)
+
 	conn := &Connection{
 		channelID:         channelID,
 		closed:            make(chan struct{}),
@@ -631,14 +624,11 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 	}
 
 	var err error
-	conn.resourceID, err = getResourceID()
-	if err != nil {
-		return nil, err
-	}
 	conn.client, err = NewClient(ctx, regional, opts...)
 	if err != nil {
 		return nil, err
 	}
+	conn.resourceID = resourceID
 
 	if err := conn.createStream(ctx); err != nil {
 		conn.close(err)
