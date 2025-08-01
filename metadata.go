@@ -49,7 +49,7 @@ var (
 
 	zone       string
 	resourceID string
-	idToken    *cachedIDToken
+	idToken    = &cachedIDToken{}
 )
 
 func initGCEMetadata() (string, string, func() (string, error), error) {
