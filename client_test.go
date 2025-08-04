@@ -240,7 +240,7 @@ func TestGetEndpoint(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			zone = "test-region-zone"
+			protectedZone = "test-region-zone"
 			endpoint, err := getEndpoint(tc.regional)
 			if err != nil {
 				t.Fatalf("getEndpoint(%v) returned an unexpected error: %v", tc.regional, err)
@@ -289,9 +289,12 @@ func TestMetadataInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createTestCC() failed: %v", err)
 	}
-	zone = ""
-	resourceID = ""
-	idToken = nil
+	metadataInitMx.Lock()
+	protectedZone = ""
+	protectedResourceID = ""
+	protectedIDToken = nil
+	metadataInited = false
+	metadataInitMx.Unlock()
 	MetadataInitFunc = func() (string, string, func() (string, error), error) {
 		return "custom-region-zone", "custom-resource-id", func() (string, error) { return rawToken, nil }, nil
 	}
@@ -333,7 +336,9 @@ func TestMetadataInit(t *testing.T) {
 }
 
 func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection, error) {
-	metadataInitOnce = sync.Once{}
+	metadataInitMx.Lock()
+	metadataInited = false
+	metadataInitMx.Unlock()
 	srv, cc, err := createTestSrv(t)
 	if err != nil {
 		t.Fatalf("createTestSrv() failed: %v", err)
@@ -694,8 +699,8 @@ func TestReceive(t *testing.T) {
 func TestGetIdentityToken(t *testing.T) {
 	// Setup Token
 	future := time.Now().Add(time.Hour)
-	idToken.expTime = &future
-	idToken.raw = "first-token"
+	protectedIDToken.expTime = &future
+	protectedIDToken.raw = "first-token"
 
 	// Validate raw token is returned if exp is in the future.
 	token, err := getIdentityToken()
@@ -703,17 +708,17 @@ func TestGetIdentityToken(t *testing.T) {
 		t.Fatalf("getIdentityToken() failed: %v", err)
 	}
 	if token != "first-token" {
-		t.Errorf("idToken.raw = %v, want first-token", idToken.raw)
+		t.Errorf("idToken.raw = %v, want first-token", protectedIDToken.raw)
 	}
 
 	// Validate token is refreshed if exp is in the past.
 	past := time.Now().Add(-time.Hour)
-	idToken.expTime = &past
+	protectedIDToken.expTime = &past
 	token, err = getIdentityToken()
 	if err != nil {
 		t.Fatalf("getIdentityToken() failed: %v", err)
 	}
 	if token != rawToken {
-		t.Errorf("idToken.raw = %v, want %v", idToken.raw, rawToken)
+		t.Errorf("idToken.raw = %v, want %v", protectedIDToken.raw, rawToken)
 	}
 }

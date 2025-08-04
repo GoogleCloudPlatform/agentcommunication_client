@@ -79,11 +79,11 @@ func loggerPrintf(format string, v ...any) {
 }
 
 func getEndpoint(regional bool) (string, error) {
-	location := zone
+	location := getZone()
 	if regional {
 		index := strings.LastIndex(location, "-")
 		if index == -1 {
-			return "", fmt.Errorf("zone %q is not a valid zone", zone)
+			return "", fmt.Errorf("zone %q is not a valid zone", getZone())
 		}
 		location = location[:index]
 	}
@@ -95,7 +95,9 @@ func getEndpoint(regional bool) (string, error) {
 // Caller must close the returned client when it is done being used to clean up its underlying
 // connections.
 func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
-	metadataInitOnce.Do(metadataInit)
+	if err := metadataInit(); err != nil {
+		return nil, err
+	}
 
 	endpoint, err := getEndpoint(regional)
 	if err != nil {
@@ -108,7 +110,9 @@ func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) 
 // SendAgentMessage sends a message to the client. This is equivalent to sending a message via
 // StreamAgentMessages with a single message and waiting for the response.
 func SendAgentMessage(ctx context.Context, channelID string, client *agentcommunication.Client, msg *acpb.MessageBody) (*acpb.SendAgentMessageResponse, error) {
-	metadataInitOnce.Do(metadataInit)
+	if err := metadataInit(); err != nil {
+		return nil, err
+	}
 
 	loggerPrintf("SendAgentMessage")
 	token, err := getIdentityToken()
@@ -118,16 +122,16 @@ func SendAgentMessage(ctx context.Context, channelID string, client *agentcommun
 
 	ctx = metadata.NewOutgoingContext(ctx, metadata.New(map[string]string{
 		"authentication":                  "Bearer " + token,
-		"agent-communication-resource-id": resourceID,
+		"agent-communication-resource-id": getResourceID(),
 		"agent-communication-channel-id":  channelID,
 	}))
 
-	loggerPrintf("Using ResourceID %q", resourceID)
+	loggerPrintf("Using ResourceID %q", getResourceID())
 	loggerPrintf("Using ChannelID %q", channelID)
 
 	return client.SendAgentMessage(ctx, &acpb.SendAgentMessageRequest{
 		ChannelId:   channelID,
-		ResourceId:  resourceID,
+		ResourceId:  getResourceID(),
 		MessageBody: msg,
 	})
 }
@@ -585,7 +589,9 @@ func (c *Connection) createStream(ctx context.Context) error {
 // the connection to be closed automatically. The passed in client will not be closed and can be
 // reused.
 func NewConnection(ctx context.Context, channelID string, client *agentcommunication.Client) (*Connection, error) {
-	metadataInitOnce.Do(metadataInit)
+	if err := metadataInit(); err != nil {
+		return nil, err
+	}
 
 	conn := &Connection{
 		channelID:           channelID,
@@ -599,7 +605,7 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 		callerManagedClient: true,
 	}
 
-	conn.resourceID = resourceID
+	conn.resourceID = getResourceID()
 	if err := conn.createStream(ctx); err != nil {
 		conn.close(err)
 		return nil, err
@@ -611,7 +617,9 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 // CreateConnection creates a new connection.
 // DEPRECATED: Use NewConnection instead.
 func CreateConnection(ctx context.Context, channelID string, regional bool, opts ...option.ClientOption) (*Connection, error) {
-	metadataInitOnce.Do(metadataInit)
+	if err := metadataInit(); err != nil {
+		return nil, err
+	}
 
 	conn := &Connection{
 		channelID:         channelID,
@@ -628,7 +636,7 @@ func CreateConnection(ctx context.Context, channelID string, regional bool, opts
 	if err != nil {
 		return nil, err
 	}
-	conn.resourceID = resourceID
+	conn.resourceID = getResourceID()
 
 	if err := conn.createStream(ctx); err != nil {
 		conn.close(err)

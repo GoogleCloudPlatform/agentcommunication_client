@@ -32,25 +32,47 @@ const (
 )
 
 var (
-	metadataInitOnce sync.Once
-	metadataInit     = func() {
+	metadataInited bool
+	metadataInitMx sync.RWMutex
+	metadataInit   = func() error {
+		metadataInitMx.Lock()
+		defer metadataInitMx.Unlock()
+		if metadataInited {
+			return nil
+		}
+
 		z, r, tokenGetter, err := MetadataInitFunc()
 		if err != nil {
 			loggerPrintf("Failed to initialize metadata: %v", err)
-			return
+			return err
 		}
-		zone = z
-		resourceID = r
-		idToken = &cachedIDToken{tokenGetter: tokenGetter}
+		protectedZone = z
+		protectedResourceID = r
+		protectedIDToken = &cachedIDToken{tokenGetter: tokenGetter}
+
+		metadataInited = true
+		return nil
 	}
 	// MetadataInitFunc is a function that initializes the metadata. If not set, the metadata will be
 	// initialized for GCE.
 	MetadataInitFunc func() (string, string, func() (string, error), error) = initGCEMetadata
 
-	zone       string
-	resourceID string
-	idToken    = &cachedIDToken{}
+	protectedZone       string
+	protectedResourceID string
+	protectedIDToken    = &cachedIDToken{}
 )
+
+func getResourceID() string {
+	metadataInitMx.RLock()
+	defer metadataInitMx.RUnlock()
+	return protectedResourceID
+}
+
+func getZone() string {
+	metadataInitMx.RLock()
+	defer metadataInitMx.RUnlock()
+	return protectedZone
+}
 
 func initGCEMetadata() (string, string, func() (string, error), error) {
 	loggerPrintf("Running in GCE")
@@ -137,15 +159,17 @@ func (t *cachedIDToken) get() error {
 }
 
 func getIdentityToken() (string, error) {
-	idToken.Lock()
-	defer idToken.Unlock()
+	metadataInitMx.RLock()
+	defer metadataInitMx.RUnlock()
+	protectedIDToken.Lock()
+	defer protectedIDToken.Unlock()
 
 	// Re-request token if expiry is within 10 minutes.
-	if idToken.expTime == nil || time.Now().After(idToken.expTime.Add(-10*time.Minute)) {
-		if err := idToken.get(); err != nil {
+	if protectedIDToken.expTime == nil || time.Now().After(protectedIDToken.expTime.Add(-10*time.Minute)) {
+		if err := protectedIDToken.get(); err != nil {
 			return "", err
 		}
 	}
 
-	return idToken.raw, nil
+	return protectedIDToken.raw, nil
 }
