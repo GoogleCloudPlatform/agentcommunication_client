@@ -86,7 +86,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
 
   // Initialize the client.
   {
-    absl::MutexLock lock(&client->reactor_mtx_);
+    absl::MutexLock lock(client->reactor_mtx_);
     client->reactor_ = std::make_unique<AcsAgentClientReactor>(
         std::move(stub),
         absl::bind_front(&AcsAgentClient::ReactorReadCallback, client.get()),
@@ -105,7 +105,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
 }
 
 absl::StatusOr<uint64_t> AcsAgentClient::GetMessagePerMinuteQuota() {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   if (reactor_ == nullptr || stream_state_ != ClientState::kReady) {
     return absl::FailedPreconditionError("stream not initialized.");
   }
@@ -113,7 +113,7 @@ absl::StatusOr<uint64_t> AcsAgentClient::GetMessagePerMinuteQuota() {
 }
 
 absl::StatusOr<uint64_t> AcsAgentClient::GetBytesPerMinuteQuota() {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   if (reactor_ == nullptr || stream_state_ != ClientState::kReady) {
     return absl::FailedPreconditionError("stream not initialized.");
   }
@@ -126,7 +126,7 @@ absl::Status AcsAgentClient::AddRequest(Request& request) {
   for (int i = 0; i < 5; ++i) {
     // Generate a new message id for each attempt.
     {
-      absl::MutexLock lock(&reactor_mtx_);
+      absl::MutexLock lock(reactor_mtx_);
       request.set_message_id(CreateMessageUuid());
     }
     latest_send_request_status = AddRequestAndWaitForResponse(request);
@@ -184,7 +184,7 @@ bool AcsAgentClient::IsDead() {
   // caller can retry sending messages later with a backoff mechanism. If the
   // stream_state_ is kStreamNotInitialized, the client is not dead yet, just
   // waiting for the successful registration.
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   return stream_state_ == ClientState::kStreamFailedToInitialize ||
          stream_state_ == ClientState::kShutdown;
 }
@@ -212,14 +212,14 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
   std::promise<absl::Status> responsePromise;
   std::future<absl::Status> responseFuture = responsePromise.get_future();
   {
-    absl::MutexLock lock(&request_delivery_status_mtx_);
+    absl::MutexLock lock(request_delivery_status_mtx_);
     attempted_requests_responses_sub_.emplace(message_id,
                                               std::move(responsePromise));
   }
   // TODO: Make the retry parameters configurable.
   for (int i = 0; i < 5; ++i) {
     {
-      absl::MutexLock lock(&reactor_mtx_);
+      absl::MutexLock lock(reactor_mtx_);
       if (request.has_register_connection() &&
           (stream_state_ != ClientState::kStreamNotInitialized &&
            stream_state_ != ClientState::kStreamTemporarilyDown)) {
@@ -242,7 +242,7 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
   if (!added_to_reactor) {
     // Set a dummy status value and clean up the promise if we fail to add the
     // request to the reactor.
-    absl::MutexLock lock(&request_delivery_status_mtx_);
+    absl::MutexLock lock(request_delivery_status_mtx_);
     SetValueAndRemovePromise(message_id, absl::OkStatus());
     ABSL_VLOG(1) << absl::StrFormat(
         "Failed to add message with id: %s to reactor as the ongoing write "
@@ -279,7 +279,7 @@ absl::Status AcsAgentClient::AddRequestAndWaitForResponse(
   }
   // Set a dummy status value and clean up the promise if we don't receive the
   // response from the server.
-  absl::MutexLock lock(&request_delivery_status_mtx_);
+  absl::MutexLock lock(request_delivery_status_mtx_);
   SetValueAndRemovePromise(message_id, absl::OkStatus());
   return received_status;
 }
@@ -301,16 +301,16 @@ void AcsAgentClient::ClientReadMessage() {
     response_read_mtx_.LockWhen(
         absl::Condition(this, &AcsAgentClient::ShouldWakeUpClientReadMessage));
     if (client_read_state_ == ClientState::kShutdown) {
-      response_read_mtx_.Unlock();
+      response_read_mtx_.unlock();
       return;
     }
     if (msg_responses_.empty()) {
-      response_read_mtx_.Unlock();
+      response_read_mtx_.unlock();
       continue;
     }
     Response response = std::move(msg_responses_.front());
     msg_responses_.pop();
-    response_read_mtx_.Unlock();
+    response_read_mtx_.unlock();
 
     // Exit the critical section and process the message.
     if (response.has_message_response()) {
@@ -329,7 +329,7 @@ void AcsAgentClient::ReactorReadCallback(
   if (status == AcsAgentClientReactor::RpcStatus::kRpcClosedByServer) {
     ABSL_VLOG(1) << "RPC is closed by server, restarting the stream.";
     // Wakes up RestartReactor() to restart the stream.
-    absl::MutexLock lock(&reactor_mtx_);
+    absl::MutexLock lock(reactor_mtx_);
     if (stream_state_ != ClientState::kShutdown) {
       // If the stream is being shutdown by client, ie. stream_state_ is
       // kShutdown, we should not restart the stream.
@@ -338,7 +338,7 @@ void AcsAgentClient::ReactorReadCallback(
     return;
   }
   // Wake up ClientReadMessage().
-  absl::MutexLock lock(&response_read_mtx_);
+  absl::MutexLock lock(response_read_mtx_);
   msg_responses_.push(std::move(response));
   ABSL_VLOG(2) << "Producer called with response: "
                << absl::StrCat(msg_responses_.front());
@@ -351,13 +351,13 @@ absl::Status AcsAgentClient::RegisterConnection(const Request& request) {
   std::promise<absl::Status> responsePromise;
   std::future<absl::Status> responseFuture = responsePromise.get_future();
   {
-    absl::MutexLock lock(&request_delivery_status_mtx_);
+    absl::MutexLock lock(request_delivery_status_mtx_);
     attempted_requests_responses_sub_.emplace(message_id,
                                               std::move(responsePromise));
   }
   bool added_to_reactor = reactor_->AddRequest(request);
   if (!added_to_reactor) {
-    absl::MutexLock lock(&request_delivery_status_mtx_);
+    absl::MutexLock lock(request_delivery_status_mtx_);
     SetValueAndRemovePromise(message_id, absl::OkStatus());
     return absl::InternalError(
         "Failed to add registration request to reactor, because the existing "
@@ -399,7 +399,7 @@ absl::Status AcsAgentClient::RegisterConnection(const Request& request) {
 
   // Set a dummy status value and clean up the promise if we don't receive the
   // response from the server.
-  absl::MutexLock lock(&request_delivery_status_mtx_);
+  absl::MutexLock lock(request_delivery_status_mtx_);
   SetValueAndRemovePromise(message_id, absl::OkStatus());
   return received_status;
 }
@@ -414,7 +414,7 @@ void AcsAgentClient::RestartClient() {
         &stream_state_));
     // Terminate the thread if the client is being shutdown.
     if (stream_state_ == ClientState::kShutdown) {
-      reactor_mtx_.Unlock();
+      reactor_mtx_.unlock();
       return;
     }
 
@@ -432,7 +432,7 @@ void AcsAgentClient::RestartClient() {
     std::unique_ptr<AcsStub> stub = GenerateConnectionIdAndStub();
     if (stub == nullptr) {
       stream_state_ = ClientState::kStreamFailedToInitialize;
-      reactor_mtx_.Unlock();
+      reactor_mtx_.unlock();
       return;
     }
     reactor_ = std::make_unique<AcsAgentClientReactor>(
@@ -441,7 +441,7 @@ void AcsAgentClient::RestartClient() {
         connection_id_);
     if (reactor_ == nullptr) {
       stream_state_ = ClientState::kStreamFailedToInitialize;
-      reactor_mtx_.Unlock();
+      reactor_mtx_.unlock();
       ABSL_LOG(WARNING) << "Failed to generate connection id and reactor.";
       return;
     }
@@ -450,10 +450,10 @@ void AcsAgentClient::RestartClient() {
     absl::Status init_status = Init();
     if (!init_status.ok()) {
       stream_state_ = ClientState::kStreamFailedToInitialize;
-      reactor_mtx_.Unlock();
+      reactor_mtx_.unlock();
       return;
     }
-    reactor_mtx_.Unlock();
+    reactor_mtx_.unlock();
   }
 }
 
@@ -476,7 +476,7 @@ std::unique_ptr<AcsStub> AcsAgentClient::GenerateConnectionIdAndStub() {
 }
 
 void AcsAgentClient::AckOnSuccessfulDelivery(const Response& response) {
-  absl::MutexLock lock(&request_delivery_status_mtx_);
+  absl::MutexLock lock(request_delivery_status_mtx_);
   const std::string& message_id = response.message_id();
   if (attempted_requests_responses_sub_.find(message_id) ==
       attempted_requests_responses_sub_.end()) {
@@ -499,7 +499,7 @@ void AcsAgentClient::Shutdown() {
   if (read_response_thread_.joinable()) {
     {
       // Wakes up ClientReadMessage() to shut it down.
-      absl::MutexLock lock(&response_read_mtx_);
+      absl::MutexLock lock(response_read_mtx_);
       client_read_state_ = ClientState::kShutdown;
     }
     read_response_thread_.join();
@@ -509,7 +509,7 @@ void AcsAgentClient::Shutdown() {
   // Otherwise, the restart_client_thread_ may try to restart the RPC.
   if (restart_client_thread_.joinable()) {
     {
-      absl::MutexLock lock(&reactor_mtx_);
+      absl::MutexLock lock(reactor_mtx_);
       stream_state_ = ClientState::kShutdown;
     }
     restart_client_thread_.join();
@@ -519,7 +519,7 @@ void AcsAgentClient::Shutdown() {
   // section to avoid holding the lock while waiting for the RPC to terminate.
   std::unique_ptr<AcsAgentClientReactor> reactor_to_delete;
   {
-    absl::MutexLock lock(&reactor_mtx_);
+    absl::MutexLock lock(reactor_mtx_);
     reactor_to_delete = std::move(reactor_);
   }
   reactor_to_delete = nullptr;

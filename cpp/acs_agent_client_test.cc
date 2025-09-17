@@ -122,7 +122,7 @@ class AcsAgentClientTest : public ::testing::Test {
       : service_(
             [this](Request request) {
               // Callback to be invoked in OnReadDone() of the server reactor.
-              absl::MutexLock lock(&custom_server_channel_.mtx);
+              absl::MutexLock lock(custom_server_channel_.mtx);
               custom_server_channel_.requests.push_back(std::move(request));
               if (custom_server_channel_.delay_response) {
                 absl::SleepFor(custom_server_channel_.delay_duration);
@@ -144,7 +144,7 @@ class AcsAgentClientTest : public ::testing::Test {
     client_ = AcsAgentClient::Create(
         std::move(stub_), AgentConnectionId(),
         [this](Response response) {
-          absl::MutexLock lock(&custom_client_channel_.mtx);
+          absl::MutexLock lock(custom_client_channel_.mtx);
           custom_client_channel_.responses.push_back(std::move(response));
           ABSL_VLOG(2) << "response read: "
                        << absl::StrCat(custom_client_channel_.responses.back());
@@ -159,12 +159,12 @@ class AcsAgentClientTest : public ::testing::Test {
     // then clear the responses.
     ASSERT_TRUE(WaitUntil(
         [this]() {
-          absl::MutexLock lock(&custom_client_channel_.mtx);
+          absl::MutexLock lock(custom_client_channel_.mtx);
           return custom_client_channel_.responses.size() == 1;
         },
         absl::Seconds(10), absl::Seconds(1)));
     {
-      absl::MutexLock lock(&custom_client_channel_.mtx);
+      absl::MutexLock lock(custom_client_channel_.mtx);
       custom_client_channel_.responses.clear();
     }
 
@@ -172,12 +172,12 @@ class AcsAgentClientTest : public ::testing::Test {
     // clear the requests.
     ASSERT_TRUE(WaitUntil(
         [this]() {
-          absl::MutexLock lock(&custom_server_channel_.mtx);
+          absl::MutexLock lock(custom_server_channel_.mtx);
           return custom_server_channel_.requests.size() == 1;
         },
         absl::Seconds(10), absl::Seconds(1)));
     {
-      absl::MutexLock lock(&custom_server_channel_.mtx);
+      absl::MutexLock lock(custom_server_channel_.mtx);
       custom_server_channel_.requests.clear();
     }
   }
@@ -196,7 +196,7 @@ class AcsAgentClientTest : public ::testing::Test {
 
   // Sets the server whether to delay the response for the given duration.
   void SetServerDelay(bool delay_response, absl::Duration delay_duration) {
-    absl::MutexLock lock(&custom_server_channel_.mtx);
+    absl::MutexLock lock(custom_server_channel_.mtx);
     custom_server_channel_.delay_response = delay_response;
     custom_server_channel_.delay_duration = delay_duration;
   }
@@ -232,14 +232,14 @@ TEST_F(AcsAgentClientTest, TestClientSendMessagesRepeatedlySuccessful) {
   // Wait for the response to be read by the client. It should happen instantly.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 50;
       },
       absl::Seconds(10), absl::Seconds(1)));
   // Wait for the acks to be read by the server. It should happen instantly.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_server_channel_.mtx);
+        absl::MutexLock lock(custom_server_channel_.mtx);
         return custom_server_channel_.requests.size() == 50;
       },
       absl::Seconds(10), absl::Seconds(1)));
@@ -248,8 +248,8 @@ TEST_F(AcsAgentClientTest, TestClientSendMessagesRepeatedlySuccessful) {
   // delivered in order and have the same message id as the requests received by
   // the server. And verify all requests are received by the server as well.
   {
-    absl::MutexLock lock1(&custom_client_channel_.mtx);
-    absl::MutexLock lock2(&custom_server_channel_.mtx);
+    absl::MutexLock lock1(custom_client_channel_.mtx);
+    absl::MutexLock lock2(custom_server_channel_.mtx);
     for (int i = 0; i < 50; ++i) {
       EXPECT_TRUE(custom_client_channel_.responses[i].has_message_response());
       EXPECT_EQ(custom_client_channel_.responses[i]
@@ -281,7 +281,7 @@ TEST_F(AcsAgentClientTest, TestSendMessageTimeout) {
   // Wait for the responses to be read by the client.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 1;
       },
       absl::Seconds(10), absl::Seconds(1)));
@@ -290,8 +290,8 @@ TEST_F(AcsAgentClientTest, TestSendMessageTimeout) {
   // server receives 1 request from the client with the same content because
   // the client will not retry.
   {
-    absl::MutexLock lock1(&custom_client_channel_.mtx);
-    absl::MutexLock lock2(&custom_server_channel_.mtx);
+    absl::MutexLock lock1(custom_client_channel_.mtx);
+    absl::MutexLock lock2(custom_server_channel_.mtx);
     ASSERT_EQ(custom_server_channel_.requests.size(), 1);
       EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
                 custom_server_channel_.requests[0].message_id());
@@ -374,14 +374,14 @@ TEST_F(AcsAgentClientTest, TestClientReadMessagesRepeatedlySuccessful) {
   // Wait for the response to be read by the client. It should happen instantly.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 50;
       },
       absl::Seconds(10), absl::Seconds(1)));
   // Wait for the acks to be read by the server. It should happen instantly.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_server_channel_.mtx);
+        absl::MutexLock lock(custom_server_channel_.mtx);
         return custom_server_channel_.requests.size() == 50;
       },
       absl::Seconds(10), absl::Seconds(1)));
@@ -389,8 +389,8 @@ TEST_F(AcsAgentClientTest, TestClientReadMessagesRepeatedlySuccessful) {
   // Verify that client receives all 50 messages with right content and server
   // has received 50 acks with right message ids.
   {
-    absl::MutexLock lock1(&custom_client_channel_.mtx);
-    absl::MutexLock lock2(&custom_server_channel_.mtx);
+    absl::MutexLock lock1(custom_client_channel_.mtx);
+    absl::MutexLock lock2(custom_server_channel_.mtx);
     for (int i = 0; i < 50; ++i) {
       EXPECT_EQ(custom_client_channel_.responses[i].message_id(),
                 message_ids[i]);
@@ -437,14 +437,14 @@ TEST_F(AcsAgentClientTest, TestReadSuccessfullyAfterWritingRepeatedly) {
   // Wait for the response to be read by the client.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 100;
       },
       absl::Seconds(10), absl::Seconds(1)));
   // Wait for the request to be read by the server.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_server_channel_.mtx);
+        absl::MutexLock lock(custom_server_channel_.mtx);
         return custom_server_channel_.requests.size() == 100;
       },
       absl::Seconds(10), absl::Seconds(1)));
@@ -455,7 +455,7 @@ TEST_F(AcsAgentClientTest, TestReadSuccessfullyAfterWritingRepeatedly) {
   // order. Also record the message ids sent by the client.
   std::vector<std::string> message_ids_sent_by_client(50);
   {
-    absl::MutexLock lock(&custom_server_channel_.mtx);
+    absl::MutexLock lock(custom_server_channel_.mtx);
     int ack_count = 0;
     int message_body_count = 0;
     for (const Request& request : custom_server_channel_.requests) {
@@ -479,7 +479,7 @@ TEST_F(AcsAgentClientTest, TestReadSuccessfullyAfterWritingRepeatedly) {
   // Verify that client has received 50 acks and 50 message bodies in the right
   // order.
   {
-    absl::MutexLock lock(&custom_client_channel_.mtx);
+    absl::MutexLock lock(custom_client_channel_.mtx);
     int ack_count = 0;
     int message_body_count = 0;
     for (const Response& response : custom_client_channel_.responses) {
@@ -530,14 +530,14 @@ TEST_F(AcsAgentClientTest, TestWriteSuccessfullyAfterReadingRepeatedly) {
   // Wait for the responses to be read by the client.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 100;
       },
       absl::Seconds(20), absl::Seconds(1)));
   // Wait for the requests to be read by the server.
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_server_channel_.mtx);
+        absl::MutexLock lock(custom_server_channel_.mtx);
         return custom_server_channel_.requests.size() == 100;
       },
       absl::Seconds(20), absl::Seconds(1)));
@@ -545,7 +545,7 @@ TEST_F(AcsAgentClientTest, TestWriteSuccessfullyAfterReadingRepeatedly) {
   // Verify that server has received 50 acks and 50 message bodies.
   std::vector<std::string> message_ids_sent_by_client(50);
   {
-    absl::MutexLock lock(&custom_server_channel_.mtx);
+    absl::MutexLock lock(custom_server_channel_.mtx);
     int ack_count = 0;
     int message_body_count = 0;
     for (const Request& request : custom_server_channel_.requests) {
@@ -568,7 +568,7 @@ TEST_F(AcsAgentClientTest, TestWriteSuccessfullyAfterReadingRepeatedly) {
 
   // Verify that client has received 50 acks and 50 message bodies.
   {
-    absl::MutexLock lock(&custom_client_channel_.mtx);
+    absl::MutexLock lock(custom_client_channel_.mtx);
     int ack_count = 0;
     int message_body_count = 0;
     for (const Response& response : custom_client_channel_.responses) {
@@ -620,14 +620,14 @@ TEST_F(AcsAgentClientTest, TestClientRecreatedAfterServerCancellation) {
 
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return custom_client_channel_.responses.size() == 2;
       },
       absl::Seconds(10), absl::Seconds(0.1)));
 
   ASSERT_TRUE(WaitUntil(
       [this]() {
-        absl::MutexLock lock(&custom_server_channel_.mtx);
+        absl::MutexLock lock(custom_server_channel_.mtx);
         return custom_server_channel_.requests.size() == 2;
       },
       absl::Seconds(10), absl::Seconds(0.1)));
@@ -636,7 +636,7 @@ TEST_F(AcsAgentClientTest, TestClientRecreatedAfterServerCancellation) {
   // one for the request.
   std::string registration_message_id;
   {
-    absl::MutexLock lock(&custom_server_channel_.mtx);
+    absl::MutexLock lock(custom_server_channel_.mtx);
     EXPECT_TRUE(custom_server_channel_.requests[0].has_register_connection());
     registration_message_id = custom_server_channel_.requests[0].message_id();
     EXPECT_EQ(custom_server_channel_.requests[1].message_id(),
@@ -649,7 +649,7 @@ TEST_F(AcsAgentClientTest, TestClientRecreatedAfterServerCancellation) {
   // Verify that client has received 2 responses, one for the registration and
   // one for request.
   {
-    absl::MutexLock lock(&custom_client_channel_.mtx);
+    absl::MutexLock lock(custom_client_channel_.mtx);
     EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
               registration_message_id);
     EXPECT_EQ(custom_client_channel_.responses[1].message_id(),
@@ -688,7 +688,7 @@ TEST_F(AcsAgentClientTest, TestFailureToRegisterConnection) {
   client_ = AcsAgentClient::Create(
       CreateStub(server_->GetServerAddress()), AgentConnectionId(),
       [this](Response response) {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         custom_client_channel_.responses.push_back(std::move(response));
         ABSL_VLOG(2) << "response read: "
                      << absl::StrCat(custom_client_channel_.responses.back());
@@ -751,7 +751,7 @@ TEST_F(AcsAgentClientTest,
   (*client_)->Shutdown();
   ASSERT_TRUE(RemainTrue(
       [&]() {
-        absl::MutexLock lock(&custom_client_channel_.mtx);
+        absl::MutexLock lock(custom_client_channel_.mtx);
         return (*client_)->IsDead() && custom_client_channel_.responses.empty();
       },
       absl::Seconds(3), absl::Seconds(0.1)));

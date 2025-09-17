@@ -77,17 +77,17 @@ std::unique_ptr<AcsStub> AcsAgentClientReactor::CreateStub(
 }
 
 absl::StatusOr<uint64_t> AcsAgentClientReactor::GetMessagesPerMinuteQuota() {
-  absl::MutexLock lock(&status_mtx_);
+  absl::MutexLock lock(status_mtx_);
   return messages_per_minute_quota_;
 }
 
 absl::StatusOr<uint64_t> AcsAgentClientReactor::GetBytesPerMinuteQuota() {
-  absl::MutexLock lock(&status_mtx_);
+  absl::MutexLock lock(status_mtx_);
   return bytes_per_minute_quota_;
 }
 
 bool AcsAgentClientReactor::Cancel() {
-  absl::MutexLock lock(&status_mtx_);
+  absl::MutexLock lock(status_mtx_);
   if (rpc_done_) {
     ABSL_VLOG(1)
         << "The RPC has already been terminated when attempting to cancel.";
@@ -112,7 +112,7 @@ void AcsAgentClientReactor::OnWriteDone(bool ok) {
     ABSL_VLOG(1) << "OnWriteDone not ok";
     return;
   }
-  absl::MutexLock lock(&request_mtx_);
+  absl::MutexLock lock(request_mtx_);
   writing_ = false;
   if (request_->has_message_response()) {
     // Pop the queue of ack_buffer_ if the last write was an ack.
@@ -129,7 +129,7 @@ void AcsAgentClientReactor::OnWriteDone(bool ok) {
 }
 
 void AcsAgentClientReactor::Ack(std::string message_id) {
-  absl::MutexLock lock(&request_mtx_);
+  absl::MutexLock lock(request_mtx_);
   std::unique_ptr<Request> request = MakeAck(std::move(message_id));
   ack_buffer_.push(std::move(request));
   if (!writing_) {
@@ -141,7 +141,7 @@ void AcsAgentClientReactor::OnReadDone(bool ok) {
   if (!ok) {
     ABSL_VLOG(1) << "OnReadDone not ok";
     {
-      absl::MutexLock lock(&status_mtx_);
+      absl::MutexLock lock(status_mtx_);
       if (rpc_cancelled_by_client_) {
         read_callback_(Response(), RpcStatus::kRpcClosedByClient);
         return;
@@ -165,7 +165,7 @@ void AcsAgentClientReactor::OnReadInitialMetadataDone(bool ok) {
   }
   const std::multimap<grpc::string_ref, grpc::string_ref>& metadata =
       context_.GetServerInitialMetadata();
-  absl::MutexLock lock(&status_mtx_);
+  absl::MutexLock lock(status_mtx_);
   messages_per_minute_quota_ = GetIntValueFromInitialMetadata<uint64_t>(
       metadata, kMessagesPerMinuteQuotaKey);
   bytes_per_minute_quota_ = GetIntValueFromInitialMetadata<uint64_t>(
@@ -203,7 +203,7 @@ absl::StatusOr<T> AcsAgentClientReactor::GetIntValueFromInitialMetadata(
 }
 
 void AcsAgentClientReactor::OnDone(const ::grpc::Status& status) {
-  absl::MutexLock lock(&status_mtx_);
+  absl::MutexLock lock(status_mtx_);
   ABSL_VLOG(1) << absl::StrFormat(
       "RPC terminated with status code: %d and message: %s and details: %s",
       status.error_code(), status.error_message(), status.error_details());
@@ -215,12 +215,12 @@ grpc::Status AcsAgentClientReactor::Await() {
   status_mtx_.LockWhen(
       absl::Condition(+[](bool* done) { return *done; }, &rpc_done_));
   grpc::Status status = rpc_final_status_;
-  status_mtx_.Unlock();
+  status_mtx_.unlock();
   return status;
 }
 
 bool AcsAgentClientReactor::AddRequest(const Request& request) {
-  absl::MutexLock lock(&request_mtx_);
+  absl::MutexLock lock(request_mtx_);
   if (msg_request_ == nullptr) {
     // Add the new request to the buffer of reactor, as the last msg_request_
     // was completed.
