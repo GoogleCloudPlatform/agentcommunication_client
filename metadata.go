@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	identityTokenPath = "instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full"
+	identityTokenPath     = "instance/service-accounts/default/identity?audience=agentcommunication.googleapis.com&format=full"
+	defaultUniverseDomain = "googleapis.com"
 )
 
 var (
@@ -41,26 +42,41 @@ var (
 			return nil
 		}
 
-		z, r, tokenGetter, err := MetadataInitFunc()
+		metadataInitData, err := MetadataInitFunc()
 		if err != nil {
 			loggerPrintf("Failed to initialize metadata: %v", err)
 			return err
 		}
-		protectedZone = z
-		protectedResourceID = r
-		protectedIDToken = &cachedIDToken{tokenGetter: tokenGetter}
+		if metadataInitData == nil {
+			return errors.New("metadata init data is nil")
+		}
+
+		protectedZone = metadataInitData.Zone
+		protectedResourceID = metadataInitData.ResourceID
+		protectedIDToken = &cachedIDToken{tokenGetter: metadataInitData.TokenGetter}
+		protectedUniverseDomain = metadataInitData.UniverseDomain
 
 		metadataInited = true
 		return nil
 	}
 	// MetadataInitFunc is a function that initializes the metadata. If not set, the metadata will be
 	// initialized for GCE.
-	MetadataInitFunc func() (string, string, func() (string, error), error) = initGCEMetadata
+	MetadataInitFunc func() (*MetadataInitData, error) = initGCEMetadata
 
-	protectedZone       string
-	protectedResourceID string
-	protectedIDToken    = &cachedIDToken{}
+	protectedZone           string
+	protectedResourceID     string
+	protectedUniverseDomain string
+	protectedIDToken        = &cachedIDToken{}
 )
+
+// MetadataInitData contains the data needed to initialize the metadata. This is returned by the
+// MetadataInitFunc.
+type MetadataInitData struct {
+	Zone           string
+	ResourceID     string
+	UniverseDomain string
+	TokenGetter    func() (string, error)
+}
 
 func getResourceID() string {
 	metadataInitMx.RLock()
@@ -74,19 +90,35 @@ func getZone() string {
 	return protectedZone
 }
 
-func initGCEMetadata() (string, string, func() (string, error), error) {
+func getUniverseDomain() string {
+	metadataInitMx.RLock()
+	defer metadataInitMx.RUnlock()
+	return protectedUniverseDomain
+}
+
+func initGCEMetadata() (*MetadataInitData, error) {
 	loggerPrintf("Running in GCE")
 	zone, err := getGCEZone()
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
 	resourceID, err := getGCEResourceID(zone)
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
-	tokenGetter := func() (string, error) { return metadata.Get(identityTokenPath) }
+	universeDomain, err := getGCEUniverseDomain()
+	if err != nil {
+		return nil, err
+	}
 
-	return zone, resourceID, tokenGetter, nil
+	metadataInitData := &MetadataInitData{
+		Zone:           zone,
+		ResourceID:     resourceID,
+		UniverseDomain: universeDomain,
+		TokenGetter:    func() (string, error) { return metadata.Get(identityTokenPath) },
+	}
+
+	return metadataInitData, nil
 }
 
 func getGCEZone() (string, error) {
@@ -109,6 +141,24 @@ func getGCEResourceID(zone string) (string, error) {
 	}
 
 	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID), nil
+}
+
+func getGCEUniverseDomain() (string, error) {
+	universeDomain, err := metadata.Get("universe/universe-domain")
+	// For now fail open if the universe domain is not set, this should be moved to a checking the
+	// HTTP response in the future (only fail open on 404).
+	if err != nil || universeDomain == "" {
+		loggerPrintf("Universe domain is not set, using googleapis.com")
+		universeDomain = defaultUniverseDomain
+	}
+
+	// Fail if the universe domain is set to something other than googleapis.com
+	if universeDomain != defaultUniverseDomain {
+		return "", fmt.Errorf("Universe domain is not supported: %q", universeDomain)
+	}
+
+	loggerPrintf("Universe domain is set to %q", universeDomain)
+	return universeDomain, nil
 }
 
 type claimSet struct {

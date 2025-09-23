@@ -88,7 +88,7 @@ func getEndpoint(regional bool) (string, error) {
 		location = location[:index]
 	}
 
-	return fmt.Sprintf("%s-agentcommunication.googleapis.com.:443", location), nil
+	return fmt.Sprintf("%s-agentcommunication.%s.:443", location, getUniverseDomain()), nil
 }
 
 // NewClient creates a new agent communication grpc client.

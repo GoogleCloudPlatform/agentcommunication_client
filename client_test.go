@@ -221,6 +221,10 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 }
 
 func TestGetEndpoint(t *testing.T) {
+	if err := metadataInit(); err != nil {
+		t.Fatalf("metadataInit() failed: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		regional bool
@@ -240,7 +244,6 @@ func TestGetEndpoint(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			protectedZone = "test-region-zone"
 			endpoint, err := getEndpoint(tc.regional)
 			if err != nil {
 				t.Fatalf("getEndpoint(%v) returned an unexpected error: %v", tc.regional, err)
@@ -295,8 +298,14 @@ func TestMetadataInit(t *testing.T) {
 	protectedIDToken = nil
 	metadataInited = false
 	metadataInitMx.Unlock()
-	MetadataInitFunc = func() (string, string, func() (string, error), error) {
-		return "custom-region-zone", "custom-resource-id", func() (string, error) { return rawToken, nil }, nil
+	MetadataInitFunc = func() (*MetadataInitData, error) {
+		mdData := &MetadataInitData{
+			Zone:           "custom-region-zone",
+			ResourceID:     "custom-resource-id",
+			UniverseDomain: "googleapis.com",
+			TokenGetter:    func() (string, error) { return rawToken, nil },
+		}
+		return mdData, nil
 	}
 	metadataInit()
 	defer func() {
