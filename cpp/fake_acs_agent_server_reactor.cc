@@ -30,7 +30,7 @@ void FakeAcsAgentServerReactor::AddResponse(
     std::unique_ptr<
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
         response) {
-  absl::MutexLock lock(&response_mtx_);
+  absl::MutexLock lock(response_mtx_);
   responses_.push(std::move(response));
   if (!writing_) {
     NextWrite();
@@ -52,7 +52,7 @@ void FakeAcsAgentServerReactor::OnReadDone(bool ok) {
     std::unique_ptr<
         google::cloud::agentcommunication::v1::StreamAgentMessagesResponse>
         ack = MakeAckResponse(request_.message_id());
-    absl::MutexLock lock(&response_mtx_);
+    absl::MutexLock lock(response_mtx_);
     responses_.push(std::move(ack));
     if (!writing_) {
       NextWrite();
@@ -65,7 +65,7 @@ void FakeAcsAgentServerReactor::OnWriteDone(bool ok) {
   if (!ok) {
     return;
   }
-  absl::MutexLock lock(&response_mtx_);
+  absl::MutexLock lock(response_mtx_);
   writing_ = false;
   if (!responses_.empty()) {
     responses_.pop();
@@ -84,7 +84,7 @@ void FakeAcsAgentServerReactor::NextWrite() {
 grpc::ServerBidiReactor<Request, Response>*
 FakeAcsAgentServiceImpl::StreamAgentMessages(
     grpc::CallbackServerContext* context) {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   reactor_ = new FakeAcsAgentServerReactor(read_callback_);
   context_ = context;
   for (const auto& [key, value] : initial_metadata_) {
@@ -95,7 +95,7 @@ FakeAcsAgentServiceImpl::StreamAgentMessages(
 
 void FakeAcsAgentServiceImpl::AddInitialMetadata(const std::string& key,
                                                  const std::string& value) {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   if (reactor_ == nullptr) {
     return;
   }
@@ -103,7 +103,7 @@ void FakeAcsAgentServiceImpl::AddInitialMetadata(const std::string& key,
 }
 
 void FakeAcsAgentServiceImpl::AddResponse(std::unique_ptr<Response> response) {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   if (reactor_ == nullptr) {
     return;
   }
@@ -111,12 +111,12 @@ void FakeAcsAgentServiceImpl::AddResponse(std::unique_ptr<Response> response) {
 }
 
 bool FakeAcsAgentServiceImpl::IsReactorCreated() {
-  absl::MutexLock lock(&reactor_mtx_);
+  absl::MutexLock lock(reactor_mtx_);
   return reactor_ != nullptr;
 }
 
 FakeAcsAgentServer::FakeAcsAgentServer(grpc::Service* service) {
-  absl::MutexLock lock(&server_mtx_);
+  absl::MutexLock lock(server_mtx_);
   grpc::ServerBuilder builder;
   server_address_ = "0.0.0.0:50051";
   server_credentials_ = grpc::InsecureServerCredentials();
@@ -127,17 +127,17 @@ FakeAcsAgentServer::FakeAcsAgentServer(grpc::Service* service) {
 
 void FakeAcsAgentServer::Shutdown(
     std::chrono::system_clock::time_point deadline) {
-  absl::MutexLock lock(&server_mtx_);
+  absl::MutexLock lock(server_mtx_);
   server_->Shutdown(deadline);
 }
 
 void FakeAcsAgentServer::Wait() {
-  absl::MutexLock lock(&server_mtx_);
+  absl::MutexLock lock(server_mtx_);
   server_->Wait();
 }
 
 std::string FakeAcsAgentServer::GetServerAddress() {
-  absl::MutexLock lock(&server_mtx_);
+  absl::MutexLock lock(server_mtx_);
   return server_address_;
 }
 
