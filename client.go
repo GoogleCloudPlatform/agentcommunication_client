@@ -72,6 +72,16 @@ var (
 	logger *log.Logger
 )
 
+// ErrUnsupportedUniverse is an error indicating that the universe is invalid.
+type ErrUnsupportedUniverse struct {
+	universe string
+}
+
+// Error returns the error message for ErrUnsupportedUniverse.
+func (e *ErrUnsupportedUniverse) Error() string {
+	return fmt.Sprintf("Universe domain is not supported: %q", e.universe)
+}
+
 func loggerPrintf(format string, v ...any) {
 	if DebugLogging {
 		logger.Output(2, fmt.Sprintf(format, v...))
@@ -95,7 +105,7 @@ func getEndpoint(regional bool) (string, error) {
 // Caller must close the returned client when it is done being used to clean up its underlying
 // connections.
 func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) (*agentcommunication.Client, error) {
-	if err := metadataInit(); err != nil {
+	if err := metadataInit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -110,7 +120,7 @@ func NewClient(ctx context.Context, regional bool, opts ...option.ClientOption) 
 // SendAgentMessage sends a message to the client. This is equivalent to sending a message via
 // StreamAgentMessages with a single message and waiting for the response.
 func SendAgentMessage(ctx context.Context, channelID string, client *agentcommunication.Client, msg *acpb.MessageBody) (*acpb.SendAgentMessageResponse, error) {
-	if err := metadataInit(); err != nil {
+	if err := metadataInit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -589,7 +599,7 @@ func (c *Connection) createStream(ctx context.Context) error {
 // the connection to be closed automatically. The passed in client will not be closed and can be
 // reused.
 func NewConnection(ctx context.Context, channelID string, client *agentcommunication.Client) (*Connection, error) {
-	if err := metadataInit(); err != nil {
+	if err := metadataInit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -617,7 +627,7 @@ func NewConnection(ctx context.Context, channelID string, client *agentcommunica
 // CreateConnection creates a new connection.
 // DEPRECATED: Use NewConnection instead.
 func CreateConnection(ctx context.Context, channelID string, regional bool, opts ...option.ClientOption) (*Connection, error) {
-	if err := metadataInit(); err != nil {
+	if err := metadataInit(ctx); err != nil {
 		return nil, err
 	}
 

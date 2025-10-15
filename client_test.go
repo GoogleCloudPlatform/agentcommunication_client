@@ -221,7 +221,7 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 }
 
 func TestGetEndpoint(t *testing.T) {
-	if err := metadataInit(); err != nil {
+	if err := metadataInit(context.Background()); err != nil {
 		t.Fatalf("metadataInit() failed: %v", err)
 	}
 
@@ -298,7 +298,7 @@ func TestMetadataInit(t *testing.T) {
 	protectedIDToken = nil
 	metadataInited = false
 	metadataInitMx.Unlock()
-	MetadataInitFunc = func() (*MetadataInitData, error) {
+	MetadataInitFunc = func(context.Context) (*MetadataInitData, error) {
 		mdData := &MetadataInitData{
 			Zone:           "custom-region-zone",
 			ResourceID:     "custom-resource-id",
@@ -307,10 +307,10 @@ func TestMetadataInit(t *testing.T) {
 		}
 		return mdData, nil
 	}
-	metadataInit()
+	metadataInit(ctx)
 	defer func() {
 		MetadataInitFunc = initGCEMetadata
-		metadataInit()
+		metadataInit(ctx)
 	}()
 
 	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
