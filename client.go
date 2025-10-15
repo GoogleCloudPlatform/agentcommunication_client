@@ -83,6 +83,12 @@ func (e *ErrUnsupportedUniverse) Error() string {
 	return fmt.Sprintf("Universe domain is not supported: %q", e.universe)
 }
 
+// Is returns true if the error is an ErrUnsupportedUniverse.
+func (e *ErrUnsupportedUniverse) Is(target error) bool {
+	_, ok := target.(*ErrUnsupportedUniverse)
+	return ok
+}
+
 func loggerPrintf(format string, v ...any) {
 	if DebugLogging {
 		logger.Output(2, fmt.Sprintf(format, v...))
