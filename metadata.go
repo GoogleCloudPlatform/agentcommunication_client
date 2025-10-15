@@ -16,6 +16,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -98,15 +99,17 @@ func getUniverseDomain() string {
 
 func initGCEMetadata() (*MetadataInitData, error) {
 	loggerPrintf("Running in GCE")
-	zone, err := getGCEZone()
+	ctx := context.Background()
+
+	zone, err := getGCEZone(ctx)
 	if err != nil {
 		return nil, err
 	}
-	resourceID, err := getGCEResourceID(zone)
+	resourceID, err := getGCEResourceID(ctx, zone)
 	if err != nil {
 		return nil, err
 	}
-	universeDomain, err := getGCEUniverseDomain()
+	universeDomain, err := getGCEUniverseDomain(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -115,14 +118,14 @@ func initGCEMetadata() (*MetadataInitData, error) {
 		Zone:           zone,
 		ResourceID:     resourceID,
 		UniverseDomain: universeDomain,
-		TokenGetter:    func() (string, error) { return metadata.Get(identityTokenPath) },
+		TokenGetter:    func() (string, error) { return metadata.GetWithContext(ctx, identityTokenPath) },
 	}
 
 	return metadataInitData, nil
 }
 
-func getGCEZone() (string, error) {
-	zone, err := metadata.Get("instance/zone")
+func getGCEZone(ctx context.Context) (string, error) {
+	zone, err := metadata.GetWithContext(ctx, "instance/zone")
 	if err != nil {
 		return "", err
 	}
@@ -130,12 +133,12 @@ func getGCEZone() (string, error) {
 	return zone[strings.LastIndex(zone, "/")+1:], nil
 }
 
-func getGCEResourceID(zone string) (string, error) {
-	projectNum, err := metadata.Get("project/numeric-project-id")
+func getGCEResourceID(ctx context.Context, zone string) (string, error) {
+	projectNum, err := metadata.GetWithContext(ctx, "project/numeric-project-id")
 	if err != nil {
 		return "", err
 	}
-	instanceID, err := metadata.Get("instance/id")
+	instanceID, err := metadata.GetWithContext(ctx, "instance/id")
 	if err != nil {
 		return "", err
 	}
@@ -143,8 +146,8 @@ func getGCEResourceID(zone string) (string, error) {
 	return fmt.Sprintf("projects/%s/zones/%s/instances/%s", projectNum, zone, instanceID), nil
 }
 
-func getGCEUniverseDomain() (string, error) {
-	universeDomain, err := metadata.Get("universe/universe-domain")
+func getGCEUniverseDomain(ctx context.Context) (string, error) {
+	universeDomain, err := metadata.GetWithContext(ctx, "universe/universe-domain")
 	// For now fail open if the universe domain is not set, this should be moved to a checking the
 	// HTTP response in the future (only fail open on 404).
 	if err != nil || universeDomain == "" {
@@ -154,7 +157,7 @@ func getGCEUniverseDomain() (string, error) {
 
 	// Fail if the universe domain is set to something other than googleapis.com
 	if universeDomain != defaultUniverseDomain {
-		return "", fmt.Errorf("Universe domain is not supported: %q", universeDomain)
+		return "", &ErrUnsupportedUniverse{universe: universeDomain}
 	}
 
 	loggerPrintf("Universe domain is set to %q", universeDomain)

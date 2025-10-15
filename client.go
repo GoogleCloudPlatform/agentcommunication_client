@@ -72,6 +72,17 @@ var (
 	logger *log.Logger
 )
 
+// ErrUnsupportedUniverse is an error indicating that ACS is not supported in
+// the specified TPC universe.
+type ErrUnsupportedUniverse struct {
+	universe string
+}
+
+// Error returns the error message for ErrUnsupportedUniverse.
+func (e *ErrUnsupportedUniverse) Error() string {
+	return fmt.Sprintf("Universe domain is not supported: %q", e.universe)
+}
+
 func loggerPrintf(format string, v ...any) {
 	if DebugLogging {
 		logger.Output(2, fmt.Sprintf(format, v...))
