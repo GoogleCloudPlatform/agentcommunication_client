@@ -36,7 +36,7 @@ using Request =
 // Alias of the stub type used in the ACS Agent Communication service in a .cc
 // file.
 using AcsStub =
-    ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
+    ::google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub;
 
 AcsAgentClientReactor::AcsAgentClientReactor(
     std::unique_ptr<AcsStub> stub,
@@ -70,10 +70,9 @@ std::unique_ptr<AcsStub> AcsAgentClientReactor::CreateStub(
   channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIME_MS, 60 * 1000);  // 60 seconds
   channel_args.SetInt(GRPC_ARG_KEEPALIVE_TIMEOUT_MS,
                       10 * 1000);  // 10 seconds
-  return google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
-      grpc::CreateCustomChannel(
-          endpoint,
-          grpc::SslCredentials(options), channel_args));
+  return google::cloud::agentcommunication::v1::grpc::AgentCommunication::
+      NewStub(grpc::CreateCustomChannel(endpoint, grpc::SslCredentials(options),
+                                        channel_args));
 }
 
 absl::StatusOr<uint64_t> AcsAgentClientReactor::GetMessagesPerMinuteQuota() {

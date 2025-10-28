@@ -40,7 +40,7 @@ using Request =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesRequest;
 using MessageBody = ::google::cloud::agentcommunication::v1::MessageBody;
 using AcsStub =
-    ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
+    ::google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub;
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     bool endpoint_regional, std::string channel_id,
@@ -64,7 +64,7 @@ absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
 
 absl::StatusOr<std::unique_ptr<AcsAgentClient>> AcsAgentClient::Create(
     std::unique_ptr<
-        google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+        google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
         stub,
     AgentConnectionId agent_connection_id,
     absl::AnyInvocable<void(
