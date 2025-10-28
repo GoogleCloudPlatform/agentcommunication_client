@@ -47,7 +47,7 @@ class AcsAgentClientReactor
   // channel to a real ACS server.
   explicit AcsAgentClientReactor(
       std::unique_ptr<
-          google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+          google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
           stub,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
@@ -56,7 +56,7 @@ class AcsAgentClientReactor
 
   explicit AcsAgentClientReactor(
       std::unique_ptr<
-          google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+          google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
           stub,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse,
@@ -66,7 +66,7 @@ class AcsAgentClientReactor
 
   // Creates a stub to connect to the ACS server.
   static std::unique_ptr<
-      google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+      google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
   CreateStub(const std::string& endpoint);
 
   // Adds new request to the buffer of reactor.
@@ -125,7 +125,7 @@ class AcsAgentClientReactor
   void NextWrite() ABSL_EXCLUSIVE_LOCKS_REQUIRED(request_mtx_);
 
   std::unique_ptr<
-      google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+      google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
       stub_;
   grpc::ClientContext context_;
 
