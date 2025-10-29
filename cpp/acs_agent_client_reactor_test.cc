@@ -33,7 +33,7 @@ namespace {
 // Alias of the stub type used in the ACS Agent Communication service in a .cc
 // file.
 using AcsStub =
-    ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
+    ::google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub;
 // Aliases of the protobuf message types used in the ACS Agent Communication
 // service in a .cc file.
 using Response =
@@ -120,8 +120,8 @@ class AcsAgentClientReactorTest : public ::testing::Test {
     std::chrono::system_clock::time_point deadline =
         std::chrono::system_clock::now() + std::chrono::seconds(10);
     ASSERT_TRUE(channel->WaitForConnected(deadline));
-    stub_ = google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
-        channel);
+    stub_ = google::cloud::agentcommunication::v1::grpc::AgentCommunication::
+        NewStub(channel);
   }
 
   void TearDown() override {
@@ -364,9 +364,9 @@ TEST_F(AcsAgentClientReactorTest,
   // Add the request to the reactor.
   ASSERT_TRUE(reactor_->AddRequest(*request));
 
-  ASSERT_TRUE(WaitUntil(
-      [this]() { return reactor_->GetMessagesPerMinuteQuota().ok(); },
-      absl::Seconds(10)));
+  ASSERT_TRUE(
+      WaitUntil([this]() { return reactor_->GetMessagesPerMinuteQuota().ok(); },
+                absl::Seconds(10)));
   EXPECT_THAT(reactor_->GetMessagesPerMinuteQuota(),
               absl_testing::IsOkAndHolds(AnyOf(1, 100)));
 }
