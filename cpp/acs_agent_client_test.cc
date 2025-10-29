@@ -46,7 +46,7 @@ namespace {
 // Alias of the stub type used in the ACS Agent Communication service in a .cc
 // file.
 using AcsStub =
-    ::google::cloud::agentcommunication::v1::AgentCommunication::Stub;
+    ::google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub;
 using Response =
     ::google::cloud::agentcommunication::v1::StreamAgentMessagesResponse;
 using Request =
@@ -110,8 +110,8 @@ std::unique_ptr<AcsStub> CreateStub(std::string address) {
   if (!channel->WaitForConnected(deadline)) {
     ABSL_LOG(WARNING) << "Failed to connect to server.";
   }
-  return google::cloud::agentcommunication::v1::AgentCommunication::NewStub(
-      channel);
+  return google::cloud::agentcommunication::v1::grpc::AgentCommunication::
+      NewStub(channel);
 }
 
 // Test fixture for AcsAgentClient.
@@ -293,16 +293,13 @@ TEST_F(AcsAgentClientTest, TestSendMessageTimeout) {
     absl::MutexLock lock1(custom_client_channel_.mtx);
     absl::MutexLock lock2(custom_server_channel_.mtx);
     ASSERT_EQ(custom_server_channel_.requests.size(), 1);
-      EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
-                custom_server_channel_.requests[0].message_id());
-      EXPECT_EQ(custom_client_channel_.responses[0]
-                    .message_response()
-                    .status()
-                    .code(),
-                0);
-      EXPECT_EQ(
-          custom_server_channel_.requests[0].message_body().body().value(),
-          "hello_world");
+    EXPECT_EQ(custom_client_channel_.responses[0].message_id(),
+              custom_server_channel_.requests[0].message_id());
+    EXPECT_EQ(
+        custom_client_channel_.responses[0].message_response().status().code(),
+        0);
+    EXPECT_EQ(custom_server_channel_.requests[0].message_body().body().value(),
+              "hello_world");
     custom_client_channel_.responses.clear();
     custom_server_channel_.requests.clear();
   }
@@ -741,7 +738,8 @@ TEST_F(AcsAgentClientTest,
        TestClientDoesNotCrashAfterShutdownWithPendingResponseFromServer) {
   // Test that the client does not crash and shutdown cleanly after shutdown
   // with a pending response from the server.
-  SetServerDelay(/*delay_response=*/true, /*delay_duration=*/absl::Seconds(2.1));
+  SetServerDelay(/*delay_response=*/true,
+                 /*delay_duration=*/absl::Seconds(2.1));
   service_.AddResponse(std::make_unique<Response>());
   *client_ = nullptr;
 }

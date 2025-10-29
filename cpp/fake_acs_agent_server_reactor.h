@@ -85,7 +85,7 @@ class FakeAcsAgentServerReactor
 // This class is used to create a fake ACS agent service for testing the
 // functionality of the client reactor.
 class FakeAcsAgentServiceImpl final
-    : public google::cloud::agentcommunication::v1::AgentCommunication::
+    : public google::cloud::agentcommunication::v1::grpc::AgentCommunication::
           CallbackService {
  public:
   explicit FakeAcsAgentServiceImpl(
