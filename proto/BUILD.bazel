@@ -23,5 +23,6 @@ cc_grpc_library(
     name = "agent_communication_cc_grpc",
     srcs = [":agent_communication_proto"],
     grpc_only = True,
+    service_namespace = "grpc",
     deps = [":agent_communication_cc_proto"],
 )
