@@ -50,14 +50,14 @@ class AcsAgentClient {
   // Factory method to create a client.
   static absl::StatusOr<std::unique_ptr<AcsAgentClient>> Create(
       std::unique_ptr<
-          google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+          google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
           stub,
       AgentConnectionId agent_connection_id,
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
           read_callback,
-      absl::AnyInvocable<std::unique_ptr<
-          google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+      absl::AnyInvocable<std::unique_ptr<google::cloud::agentcommunication::v1::
+                                             grpc::AgentCommunication::Stub>()>
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
           connection_id_generator,
@@ -114,8 +114,8 @@ class AcsAgentClient {
       absl::AnyInvocable<void(
           google::cloud::agentcommunication::v1::StreamAgentMessagesResponse)>
           read_callback,
-      absl::AnyInvocable<std::unique_ptr<
-          google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+      absl::AnyInvocable<std::unique_ptr<google::cloud::agentcommunication::v1::
+                                             grpc::AgentCommunication::Stub>()>
           stub_generator,
       absl::AnyInvocable<absl::StatusOr<AgentConnectionId>()>
           connection_id_generator,
@@ -196,7 +196,7 @@ class AcsAgentClient {
   // Generates a new stub and connection id and returns the stub, called within
   // the restart_client_thread_.
   std::unique_ptr<
-      google::cloud::agentcommunication::v1::AgentCommunication::Stub>
+      google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>
   GenerateConnectionIdAndStub() ABSL_EXCLUSIVE_LOCKS_REQUIRED(reactor_mtx_);
 
   // Creates a unique message id. Currently, it is "{random
@@ -230,7 +230,7 @@ class AcsAgentClient {
   // default implementation, this function pointer allows us to pass in a custom
   // implementation for testing purposes and other use cases.
   absl::AnyInvocable<std::unique_ptr<
-      google::cloud::agentcommunication::v1::AgentCommunication::Stub>()>
+      google::cloud::agentcommunication::v1::grpc::AgentCommunication::Stub>()>
       stub_generator_ = nullptr;
 
   // Generates a new connection id when the client needs to restart the client.
