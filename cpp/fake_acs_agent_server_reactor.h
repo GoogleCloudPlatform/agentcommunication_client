@@ -4,11 +4,9 @@
 #include <memory>
 #include <queue>
 #include <string>
-#include <utility>
 
 #include "proto/agent_communication.grpc.pb.h"
 #include "absl/base/thread_annotations.h"
-#include "absl/functional/any_invocable.h"
 #include "absl/log/absl_log.h"
 #include "absl/synchronization/mutex.h"
 #include "grpcpp/impl/service_type.h"
@@ -16,7 +14,6 @@
 #include "grpcpp/server_builder.h"
 #include "grpcpp/server_context.h"
 #include "grpcpp/support/server_callback.h"
-#include "grpcpp/support/status.h"
 
 namespace agent_communication {
 
@@ -85,7 +82,7 @@ class FakeAcsAgentServerReactor
 // This class is used to create a fake ACS agent service for testing the
 // functionality of the client reactor.
 class FakeAcsAgentServiceImpl final
-    : public google::cloud::agentcommunication::v1::AgentCommunication::
+    : public google::cloud::agentcommunication::v1::grpc::AgentCommunication::
           CallbackService {
  public:
   explicit FakeAcsAgentServiceImpl(
