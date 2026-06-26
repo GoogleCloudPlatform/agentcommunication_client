@@ -231,11 +231,17 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 
 func createTestSrvVSOCK(t *testing.T) (*testSrv, error) {
 	t.Helper()
+	oldDefaultAllowVSOCK := DefaultAllowVSOCK
+	oldVsockAvailable := vsockAvailable
+	oldVsockTarget := vsockTarget
+
 	DefaultAllowVSOCK = true
 	vsockAvailable = func() bool { return true }
 	vsockTarget = fmt.Sprintf("passthrough:%d:%d", vsock.Local, vsockPort)
 	t.Cleanup(func() {
-		DefaultAllowVSOCK = false
+		DefaultAllowVSOCK = oldDefaultAllowVSOCK
+		vsockAvailable = oldVsockAvailable
+		vsockTarget = oldVsockTarget
 	})
 
 	lis, err := vsock.ListenContextID(vsock.Local, vsockPort, nil)
@@ -388,6 +394,9 @@ func TestMetadataInit(t *testing.T) {
 	metadataInit()
 	defer func() {
 		MetadataInitFunc = initGCEMetadata
+		metadataInitMx.Lock()
+		metadataInited = false
+		metadataInitMx.Unlock()
 		metadataInit()
 	}()
 
