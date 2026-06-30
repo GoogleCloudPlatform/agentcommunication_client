@@ -231,11 +231,19 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 
 func createTestSrvVSOCK(t *testing.T) (*testSrv, error) {
 	t.Helper()
+
+	origDefaultAllowVSOCK := DefaultAllowVSOCK
+	origVsockAvailable := vsockAvailable
+	origVsockTarget := vsockTarget
+
 	DefaultAllowVSOCK = true
 	vsockAvailable = func() bool { return true }
 	vsockTarget = fmt.Sprintf("passthrough:%d:%d", vsock.Local, vsockPort)
+
 	t.Cleanup(func() {
-		DefaultAllowVSOCK = false
+		DefaultAllowVSOCK = origDefaultAllowVSOCK
+		vsockAvailable = origVsockAvailable
+		vsockTarget = origVsockTarget
 	})
 
 	lis, err := vsock.ListenContextID(vsock.Local, vsockPort, nil)
