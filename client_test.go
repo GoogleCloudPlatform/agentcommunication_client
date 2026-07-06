@@ -44,6 +44,8 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"github.com/mdlayher/vsock"
 
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
+
 	apb "google.golang.org/protobuf/types/known/anypb"
 	acpb "github.com/GoogleCloudPlatform/agentcommunication_client/gapic/agentcommunicationpb"
 )
@@ -103,6 +105,7 @@ type testSrv struct {
 	send          chan *acpb.StreamAgentMessagesResponse
 	recvErr       chan error
 	persistentErr error
+	msgStatus     *statuspb.Status
 }
 
 func newTestSrv(*grpc.Server) *testSrv {
@@ -161,7 +164,21 @@ func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgent
 			case *acpb.StreamAgentMessagesRequest_MessageResponse:
 				continue
 			}
-			if err := stream.Send(&acpb.StreamAgentMessagesResponse{MessageId: rec.GetMessageId(), Type: &acpb.StreamAgentMessagesResponse_MessageResponse{}}); err != nil {
+			statusProto := &statuspb.Status{}
+			s.reqMx.Lock()
+			if s.msgStatus != nil {
+				statusProto = s.msgStatus
+			}
+			s.reqMx.Unlock()
+			resp := &acpb.StreamAgentMessagesResponse{
+				MessageId: rec.GetMessageId(),
+				Type: &acpb.StreamAgentMessagesResponse_MessageResponse{
+					MessageResponse: &acpb.MessageResponse{
+						Status: statusProto,
+					},
+				},
+			}
+			if err := stream.Send(resp); err != nil {
 				log.Printf("Server Send: %v\n", err)
 				s.recvErr <- err
 				return
@@ -978,5 +995,62 @@ func waitForRequests(t *testing.T, srv *testSrv, expectedCount int) {
 			t.Fatalf("timed out waiting for %d requests, got %d", expectedCount, count)
 		case <-time.After(10 * time.Millisecond):
 		}
+	}
+}
+
+func TestSendMessageNoRetry(t *testing.T) {
+	ctx := context.Background()
+	srv, conn, err := newTestConnection(ctx, t)
+	if err != nil {
+		t.Fatalf("newTestConnection() failed: %v", err)
+	}
+
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+	if err := conn.SendMessageNoRetry(msg); err != nil {
+		t.Fatalf("SendMessageNoRetry() failed: %v", err)
+	}
+	waitForRequests(t, srv, 2)
+
+	if len(srv.req) != 2 {
+		t.Fatalf("srv.req = %v, want 2", len(srv.req))
+	}
+
+	wantReq := &acpb.StreamAgentMessagesRequest{Type: &acpb.StreamAgentMessagesRequest_MessageBody{MessageBody: msg}}
+	if diff := cmp.Diff(srv.req[1], wantReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
+		t.Errorf("srv.req[1] diff (-want +got):\n%s", diff)
+	}
+}
+
+func TestSendMessageNoRetry_ResourceExhausted(t *testing.T) {
+	ctx := context.Background()
+	srv, conn, err := newTestConnection(ctx, t)
+	if err != nil {
+		t.Fatalf("newTestConnection() failed: %v", err)
+	}
+
+	srv.reqMx.Lock()
+	srv.msgStatus = &statuspb.Status{
+		Code:    int32(codes.ResourceExhausted),
+		Message: "rate limit exceeded",
+	}
+	srv.reqMx.Unlock()
+
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+
+	// Record time to verify it returns immediately without backing off.
+	start := time.Now()
+	err = conn.SendMessageNoRetry(msg)
+	duration := time.Since(start)
+
+	if err == nil {
+		t.Fatal("SendMessageNoRetry() expected to fail with ResourceExhausted")
+	}
+	if !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("SendMessageNoRetry() returned unexpected error: %v, want %v", err, ErrResourceExhausted)
+	}
+
+	// Since we disabled retries, SendMessageNoRetry should return in < 100ms.
+	if duration > 100*time.Millisecond {
+		t.Errorf("SendMessageNoRetry() took %v, expected it to fail immediately (< 100ms)", duration)
 	}
 }

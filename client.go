@@ -336,6 +336,11 @@ func (c *Connection) SendMessage(msg *acpb.MessageBody) error {
 	return err
 }
 
+// SendMessageNoRetry sends a message to the client without internal retries.
+func (c *Connection) SendMessageNoRetry(msg *acpb.MessageBody) error {
+	return c.sendMessage(msg)
+}
+
 // Receive messages, Receive should be called continuously for the life of the stream connection,
 // any delay in Receive when there are queued messages will cause the server to disconnect the
 // stream. This means handling the MessageBody from Receive should not be blocking, offload message
@@ -493,7 +498,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed, streamSendLock chan
 		}
 		switch resp.GetType().(type) {
 		case *acpb.StreamAgentMessagesResponse_MessageBody:
-			// Acknowledge message first, if this ack fails dont forward the message on to the handling
+			// Acknowledge message first, if this ack fails don't forward the message on to the handling
 			// logic since that indicates a stream disconnect.
 			if err := c.acknowledgeMessage(resp.GetMessageId(), streamClosed, streamSendLock, stream); err != nil {
 				loggerPrintf("Error acknowledging message %q: %v", resp.GetMessageId(), err)
