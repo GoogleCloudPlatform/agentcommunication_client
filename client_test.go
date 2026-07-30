@@ -214,7 +214,7 @@ func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessa
 	return &acpb.SendAgentMessageResponse{MessageBody: body}, nil
 }
 
-func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
+func createTestSrv(t *testing.T, dialOpts ...grpc.DialOption) (*testSrv, *grpc.ClientConn, error) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
@@ -238,7 +238,12 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 		return lis.Dial()
 	}
 
-	cc, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	opts := append([]grpc.DialOption{
+		grpc.WithContextDialer(bufDialer),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}, dialOpts...)
+
+	cc, err := grpc.NewClient("passthrough:///bufnet", opts...)
 	if err != nil {
 		return srv, nil, err
 	}
@@ -447,11 +452,11 @@ func TestMetadataInit(t *testing.T) {
 	}
 }
 
-func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection, error) {
+func newTestConnection(ctx context.Context, t *testing.T, dialOpts ...grpc.DialOption) (*testSrv, *Connection, error) {
 	metadataInitMx.Lock()
 	metadataInited = false
 	metadataInitMx.Unlock()
-	srv, cc, err := createTestSrv(t)
+	srv, cc, err := createTestSrv(t, dialOpts...)
 	if err != nil {
 		t.Fatalf("createTestSrv() failed: %v", err)
 	}
@@ -746,6 +751,7 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 		name        string
 		err         error
 		expectError bool
+		nonStatus   bool
 	}{
 		{
 			name:        "EOF",
@@ -777,11 +783,21 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 			err:         status.Error(codes.Internal, ""),
 			expectError: true,
 		},
+		{
+			name:        "NonStatusError",
+			err:         errors.New("unexpected error"),
+			expectError: true,
+			nonStatus:   true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			srv, conn, err := newTestConnection(ctx, t)
+			var dialOpts []grpc.DialOption
+			if tc.nonStatus {
+				dialOpts = append(dialOpts, grpc.WithChainStreamInterceptor(mockErrorStreamInterceptor(tc.err)))
+			}
+			srv, conn, err := newTestConnection(ctx, t, dialOpts...)
 			if err != nil {
 				t.Fatalf("newTestConnection() failed: %v", err)
 			}
@@ -1052,5 +1068,28 @@ func TestSendMessageNoRetry_ResourceExhausted(t *testing.T) {
 	// Since we disabled retries, SendMessageNoRetry should return in < 100ms.
 	if duration > 100*time.Millisecond {
 		t.Errorf("SendMessageNoRetry() took %v, expected it to fail immediately (< 100ms)", duration)
+	}
+}
+
+type errorRecvStream struct {
+	grpc.ClientStream
+	err error
+}
+
+func (s *errorRecvStream) RecvMsg(m any) error {
+	err := s.ClientStream.RecvMsg(m)
+	if err != nil {
+		return s.err
+	}
+	return nil
+}
+
+func mockErrorStreamInterceptor(injectErr error) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return &errorRecvStream{ClientStream: stream, err: injectErr}, nil
 	}
 }
