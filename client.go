@@ -248,7 +248,7 @@ func (c *Connection) close(err error) {
 	default:
 		close(c.closed)
 		c.setCloseErr(err)
-		if !c.callerManagedClient {
+		if !c.callerManagedClient && c.client != nil {
 			c.client.Close()
 		}
 	}
@@ -477,7 +477,7 @@ func (c *Connection) recv(ctx context.Context, streamClosed, streamSendLock chan
 				loggerPrintf("Connection closed due to resource exhausted: %v", err)
 			} else if ok && st.Code() == codes.Unavailable {
 				loggerPrintf("Stream returned Unavailable, will reconnect: %v", err)
-			} else if err != io.EOF && !errors.Is(err, io.EOF) && (ok && st.Code() != codes.Canceled) && (ok && st.Code() != codes.DeadlineExceeded) {
+			} else if err != io.EOF && !errors.Is(err, io.EOF) && (!ok || (st.Code() != codes.Canceled && st.Code() != codes.DeadlineExceeded)) {
 				// EOF is a normal stream close, Canceled will be set by the server when stream timeout is
 				// reached, DeadlineExceeded would be because of the client side deadline we set.
 				loggerPrintf("Unexpected error, closing connection: %v", err)
@@ -582,6 +582,9 @@ func createStreamLoop(ctx context.Context, client *agentcommunication.Client, re
 }
 
 func (c *Connection) createStream(ctx context.Context) error {
+	if c.client == nil {
+		return errors.New("client is nil")
+	}
 	loggerPrintf("Creating stream.")
 
 	md := metadata.New(map[string]string{
