@@ -39,7 +39,7 @@ const (
 var (
 	// DefaultAllowVSOCK sets the default for VSOCK usage, can be overridden with an environment
 	// variable at runtime.
-	DefaultAllowVSOCK = false
+	DefaultAllowVSOCK = true
 
 	// vsockAvailable is a function that checks if vsock is available on the system.
 	vsockAvailable func() bool = func() bool {

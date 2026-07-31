@@ -448,6 +448,12 @@ func TestMetadataInit(t *testing.T) {
 }
 
 func newTestConnection(ctx context.Context, t *testing.T) (*testSrv, *Connection, error) {
+	origDefaultAllowVSOCK := DefaultAllowVSOCK
+	DefaultAllowVSOCK = false
+	t.Cleanup(func() {
+		DefaultAllowVSOCK = origDefaultAllowVSOCK
+	})
+
 	metadataInitMx.Lock()
 	metadataInited = false
 	metadataInitMx.Unlock()
