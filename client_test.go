@@ -1060,3 +1060,30 @@ func TestSendMessageNoRetry_ResourceExhausted(t *testing.T) {
 		t.Errorf("SendMessageNoRetry() took %v, expected it to fail immediately (< 100ms)", duration)
 	}
 }
+
+func TestSendMessage_ResourceExhausted(t *testing.T) {
+	oldSleep := timeSleep
+	timeSleep = func(time.Duration) {}
+	defer func() { timeSleep = oldSleep }()
+
+	ctx := context.Background()
+	srv, conn, err := newTestConnection(ctx, t)
+	if err != nil {
+		t.Fatalf("newTestConnection() failed: %v", err)
+	}
+
+	srv.reqMx.Lock()
+	srv.msgStatus = &statuspb.Status{
+		Code:    int32(codes.ResourceExhausted),
+		Message: "rate limit exceeded",
+	}
+	srv.reqMx.Unlock()
+
+	msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
+
+	// Every attempt is rejected, so the error must be returned once retries are exhausted.
+	err = conn.SendMessage(msg)
+	if !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("SendMessage() returned unexpected error: %v, want %v", err, ErrResourceExhausted)
+	}
+}

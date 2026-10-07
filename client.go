@@ -322,7 +322,7 @@ func (c *Connection) SendMessage(msg *acpb.MessageBody) error {
 	var err error
 	// Retry 4 times.
 	for i := 1; i <= 5; i++ {
-		err := c.sendMessage(msg)
+		err = c.sendMessage(msg)
 		if errors.Is(err, ErrResourceExhausted) {
 			// Start with 250ms sleep, then simply multiply by iteration.
 			timeSleep(time.Duration(i*250) * time.Millisecond)
