@@ -401,6 +401,12 @@ func TestMetadataInit(t *testing.T) {
 	protectedIDToken = nil
 	metadataInited = false
 	metadataInitMx.Unlock()
+	defer func() {
+		MetadataInitFunc = initGCEMetadata
+		metadataInitMx.Lock()
+		metadataInited = false
+		metadataInitMx.Unlock()
+	}()
 	MetadataInitFunc = func() (*MetadataInitData, error) {
 		mdData := &MetadataInitData{
 			Zone:           "custom-region-zone",
@@ -411,10 +417,6 @@ func TestMetadataInit(t *testing.T) {
 		return mdData, nil
 	}
 	metadataInit()
-	defer func() {
-		MetadataInitFunc = initGCEMetadata
-		metadataInit()
-	}()
 
 	client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
 	if err != nil {
@@ -956,10 +958,23 @@ func TestReceive(t *testing.T) {
 }
 
 func TestGetIdentityToken(t *testing.T) {
+	if err := metadataInit(); err != nil {
+		t.Fatalf("metadataInit() failed: %v", err)
+	}
 	// Setup Token
+	protectedIDToken.Lock()
+	originalExp := protectedIDToken.expTime
+	originalRaw := protectedIDToken.raw
 	future := time.Now().Add(time.Hour)
 	protectedIDToken.expTime = &future
 	protectedIDToken.raw = "first-token"
+	protectedIDToken.Unlock()
+	defer func() {
+		protectedIDToken.Lock()
+		protectedIDToken.expTime = originalExp
+		protectedIDToken.raw = originalRaw
+		protectedIDToken.Unlock()
+	}()
 
 	// Validate raw token is returned if exp is in the future.
 	token, err := getIdentityToken()
@@ -967,18 +982,20 @@ func TestGetIdentityToken(t *testing.T) {
 		t.Fatalf("getIdentityToken() failed: %v", err)
 	}
 	if token != "first-token" {
-		t.Errorf("idToken.raw = %v, want first-token", protectedIDToken.raw)
+		t.Errorf("idToken.raw = %v, want first-token", token)
 	}
 
 	// Validate token is refreshed if exp is in the past.
 	past := time.Now().Add(-time.Hour)
+	protectedIDToken.Lock()
 	protectedIDToken.expTime = &past
+	protectedIDToken.Unlock()
 	token, err = getIdentityToken()
 	if err != nil {
 		t.Fatalf("getIdentityToken() failed: %v", err)
 	}
 	if token != rawToken {
-		t.Errorf("idToken.raw = %v, want %v", protectedIDToken.raw, rawToken)
+		t.Errorf("idToken.raw = %v, want %v", token, rawToken)
 	}
 }
 
