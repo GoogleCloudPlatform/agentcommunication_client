@@ -22,9 +22,10 @@ static absl::StatusOr<decoded_jwt_t> DecodeJwt(const std::string& token) {
   try {
     decoded_jwt_t decoded = jwt::decode(token);
     return decoded;
-  } catch (const std::exception& e) {
+  } catch (const std::exception&) {
+    // Don't include e.what(): JSON parse errors echo parts of the payload.
     return absl::InternalError(
-        absl::StrCat("Failed to decode token: ", e.what()));
+        "Failed to decode token: invalid JWT format or encoding.");
   }
 }
 }  // namespace
@@ -61,15 +62,16 @@ absl::StatusOr<std::string> GetValueFromTokenPayloadWithKeys(
     return absl::InternalError(absl::StrFormat(
         "Token does not have a string/number value for key (%s).",
         absl::StrJoin(keys, ",")));
-  } catch (const std::exception& e) {
+  } catch (const std::exception&) {
     // The try-catch is to catch the exception thrown by the jwt-cpp
     // library. This is probably redundant since we already have the try-catch
     // in DecodeJwt, which is the only place where I suspect the exception can
     // throw. We add this outer try-catch to make the code more robust
     // and prevent exception leak into google3.
     return absl::InternalError(absl::StrFormat(
-        "Failed to get value of key (%s) from token due to exception: %s",
-        absl::StrJoin(keys, ","), e.what()));
+        "Failed to get value of key (%s) from token due to an unexpected "
+        "exception.",
+        absl::StrJoin(keys, ",")));
   }
 }
 

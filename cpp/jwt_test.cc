@@ -209,5 +209,19 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
+TEST(JwtTest, DecodeErrorDoesNotLeakTokenPayload) {
+  // The payload is {"sub":"leaked-claim-value\x01"}. The control character
+  // makes JSON parsing fail, and the parser's exception text echoes the
+  // partially read string.
+  constexpr absl::string_view kMalformedPayloadToken =
+      "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
+      "eyJzdWIiOiJsZWFrZWQtY2xhaW0tdmFsdWUBIn0.c2ln";
+  absl::StatusOr<std::string> value = GetValueFromTokenPayloadWithKeys(
+      std::string(kMalformedPayloadToken), {"sub"});
+  ASSERT_FALSE(value.ok());
+  EXPECT_THAT(value.status().message(), HasSubstr("Failed to decode token: "));
+  EXPECT_THAT(value.status().message(), Not(HasSubstr("leaked-claim-value")));
+}
+
 }  // namespace
 }  // namespace agent_communication

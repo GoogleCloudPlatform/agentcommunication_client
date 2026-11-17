@@ -125,14 +125,14 @@ absl::StatusOr<std::string> CurlHttpGet(const std::string& url,
   headers = curl_slist_append(headers, header.c_str());
   res = curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   if (res != CURLE_OK || headers == nullptr) {
-    ABSL_LOG(ERROR) << "Failed to set header: " << header;
+    // Don't log the header value; callers may pass credentials in it.
+    ABSL_LOG(ERROR) << "Failed to set header.";
     curl_easy_cleanup(curl);
     if (headers != nullptr) {
       curl_slist_free_all(headers);
     }
-    return absl::InternalError(
-        absl::StrCat("Failed to set header: ", header,
-                     " with error: ", curl_easy_strerror(res)));
+    return absl::InternalError(absl::StrCat("Failed to set header with error: ",
+                                            curl_easy_strerror(res)));
   }
 
   // Set the write callback function and its data.
