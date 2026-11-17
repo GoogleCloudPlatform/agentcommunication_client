@@ -537,27 +537,41 @@ func createStreamLoop(ctx context.Context, client *agentcommunication.Client, re
 			Type: &acpb.StreamAgentMessagesRequest_RegisterConnection{
 				RegisterConnection: &acpb.RegisterConnection{ResourceId: resourceID, ChannelId: channelID}}}
 
-		if err := stream.Send(req); err != nil {
-			return nil, fmt.Errorf("error sending register connection: %v", err)
+		sendErr := stream.Send(req)
+		if sendErr != nil && !errors.Is(sendErr, io.EOF) {
+			return nil, fmt.Errorf("error sending register connection: %v", sendErr)
 		}
 
-		// We expect the first message to be a MessageResponse.
-		resp, err := stream.Recv()
-		if err == nil {
-			switch resp.GetType().(type) {
-			case *acpb.StreamAgentMessagesResponse_MessageResponse:
-				if resp.GetMessageResponse().GetStatus().GetCode() != int32(codes.OK) {
-					return nil, fmt.Errorf("unexpected register response: %+v", resp.GetMessageResponse().GetStatus())
+		var recvErr error
+		if sendErr == nil {
+			// We expect the first message to be a MessageResponse.
+			resp, err := stream.Recv()
+			if err == nil {
+				switch resp.GetType().(type) {
+				case *acpb.StreamAgentMessagesResponse_MessageResponse:
+					if resp.GetMessageResponse().GetStatus().GetCode() != int32(codes.OK) {
+						return nil, fmt.Errorf("unexpected register response: %+v", resp.GetMessageResponse().GetStatus())
+					}
+				}
+				// Stream is connected.
+				return stream, nil
+			}
+			recvErr = err
+		} else {
+			// Send returns io.EOF when the server closes the stream; drain Recv to surface the gRPC status.
+			loggerPrintf("RegisterConnection Send returned EOF, reading stream status: %v", sendErr)
+			for {
+				if _, err := stream.Recv(); err != nil {
+					recvErr = err
+					break
 				}
 			}
-			// Stream is connected.
-			return stream, nil
 		}
 
-		st, ok := status.FromError(err)
+		st, ok := status.FromError(recvErr)
 		if ok && st.Code() == codes.ResourceExhausted {
 			if resourceExhaustedRetries <= maxResourceExhaustedRetries {
-				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", err)
+				loggerPrintf("Resource exhausted, sleeping before reconnect: %v", recvErr)
 				sleep := time.Duration(resourceExhaustedRetries+1) * time.Second
 				if resourceExhaustedRetries > 9 {
 					sleep = 10 * time.Second
@@ -566,18 +580,18 @@ func createStreamLoop(ctx context.Context, client *agentcommunication.Client, re
 				resourceExhaustedRetries++
 				continue
 			}
-			loggerPrintf("Stream returned ResourceExhausted, exceeded max number of reconnects, closing connection: %v", err)
+			loggerPrintf("Stream returned ResourceExhausted, exceeded max number of reconnects, closing connection: %v", recvErr)
 		} else if ok && st.Code() == codes.Unavailable {
 			if unavailableRetries <= maxUnavailableRetries {
-				loggerPrintf("Stream returned Unavailable, will reconnect: %v", err)
+				loggerPrintf("Stream returned Unavailable, will reconnect: %v", recvErr)
 				// Sleep for 200ms * num of unavailableRetries, first retry is immediate.
 				timeSleep(time.Duration(unavailableRetries*200) * time.Millisecond)
 				unavailableRetries++
 				continue
 			}
-			loggerPrintf("Stream returned Unavailable, exceeded max number of reconnects, closing connection: %v", err)
+			loggerPrintf("Stream returned Unavailable, exceeded max number of reconnects, closing connection: %v", recvErr)
 		}
-		return nil, err
+		return nil, recvErr
 	}
 }
 

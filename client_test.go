@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -215,7 +216,7 @@ func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessa
 	return &acpb.SendAgentMessageResponse{MessageBody: body}, nil
 }
 
-func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
+func createTestSrv(t *testing.T, dialOpts ...grpc.DialOption) (*testSrv, *grpc.ClientConn, error) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
@@ -239,7 +240,13 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 		return lis.Dial()
 	}
 
-	cc, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	opts := []grpc.DialOption{
+		grpc.WithContextDialer(bufDialer),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	opts = append(opts, dialOpts...)
+
+	cc, err := grpc.NewClient("passthrough:///bufnet", opts...)
 	if err != nil {
 		return srv, nil, err
 	}
@@ -1107,5 +1114,208 @@ func TestSendMessage_ResourceExhausted(t *testing.T) {
 	err = conn.SendMessage(msg)
 	if !errors.Is(err, ErrResourceExhausted) {
 		t.Fatalf("SendMessage() returned unexpected error: %v, want %v", err, ErrResourceExhausted)
+	}
+}
+
+type fakeRecvResult struct {
+	msg *acpb.StreamAgentMessagesResponse
+	err error
+}
+
+type fakeClientStream struct {
+	ctx         context.Context
+	sendErr     error
+	recvResults []fakeRecvResult
+	recvCalls   int
+}
+
+func (f *fakeClientStream) Header() (metadata.MD, error) { return nil, nil }
+func (f *fakeClientStream) Trailer() metadata.MD         { return nil }
+func (f *fakeClientStream) CloseSend() error             { return nil }
+func (f *fakeClientStream) Context() context.Context     { return f.ctx }
+func (f *fakeClientStream) SendMsg(any) error            { return f.sendErr }
+func (f *fakeClientStream) RecvMsg(m any) error {
+	idx := f.recvCalls
+	f.recvCalls++
+	if idx >= len(f.recvResults) {
+		return io.EOF
+	}
+	res := f.recvResults[idx]
+	if res.msg != nil {
+		if dst, ok := m.(*acpb.StreamAgentMessagesResponse); ok {
+			dst.MessageId = res.msg.MessageId
+			dst.Type = res.msg.Type
+		}
+	}
+	return res.err
+}
+
+func TestNewConnection_SendEOF(t *testing.T) {
+	origDefaultAllowVSOCK := DefaultAllowVSOCK
+	DefaultAllowVSOCK = false
+	oldSleep := timeSleep
+	timeSleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		DefaultAllowVSOCK = origDefaultAllowVSOCK
+		timeSleep = oldSleep
+	})
+
+	metadataInitMx.Lock()
+	metadataInited = false
+	metadataInitMx.Unlock()
+
+	tests := []struct {
+		name              string
+		sendErr           error
+		recvResults       []fakeRecvResult
+		wantErr           bool
+		wantCode          codes.Code
+		wantErrIs         error
+		wantAttempts      int32
+		wantFakeRecvCalls int
+	}{
+		{
+			name:    "EOF_then_Unavailable_retries",
+			sendErr: io.EOF,
+			recvResults: []fakeRecvResult{
+				{err: status.Error(codes.Unavailable, "unavailable")},
+			},
+			wantAttempts:      2,
+			wantFakeRecvCalls: 1,
+		},
+		{
+			name:    "WrappedEOF_then_ResourceExhausted_retries",
+			sendErr: fmt.Errorf("wrapped: %w", io.EOF),
+			recvResults: []fakeRecvResult{
+				{err: status.Error(codes.ResourceExhausted, "exhausted")},
+			},
+			wantAttempts:      2,
+			wantFakeRecvCalls: 1,
+		},
+		{
+			name:    "EOF_with_buffered_MessageResponse_then_Unavailable_retries",
+			sendErr: io.EOF,
+			recvResults: []fakeRecvResult{
+				{
+					msg: &acpb.StreamAgentMessagesResponse{
+						Type: &acpb.StreamAgentMessagesResponse_MessageResponse{
+							MessageResponse: &acpb.MessageResponse{
+								Status: &statuspb.Status{Code: int32(codes.OK)},
+							},
+						},
+					},
+				},
+				{err: status.Error(codes.Unavailable, "unavailable")},
+			},
+			wantAttempts:      2,
+			wantFakeRecvCalls: 2,
+		},
+		{
+			name:    "EOF_then_Internal_fails",
+			sendErr: io.EOF,
+			recvResults: []fakeRecvResult{
+				{err: status.Error(codes.Internal, "internal")},
+			},
+			wantErr:           true,
+			wantCode:          codes.Internal,
+			wantAttempts:      1,
+			wantFakeRecvCalls: 1,
+		},
+		{
+			name:    "EOF_then_EOF_fails",
+			sendErr: io.EOF,
+			recvResults: []fakeRecvResult{
+				{err: io.EOF},
+			},
+			wantErr:           true,
+			wantErrIs:         io.EOF,
+			wantAttempts:      1,
+			wantFakeRecvCalls: 1,
+		},
+		{
+			name:              "NonEOF_Send_error_fails_without_Recv",
+			sendErr:           errors.New("boom"),
+			wantErr:           true,
+			wantAttempts:      1,
+			wantFakeRecvCalls: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			var attempts atomic.Int32
+			fakeStream := &fakeClientStream{
+				sendErr:     tc.sendErr,
+				recvResults: tc.recvResults,
+			}
+
+			interceptor := func(sCtx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+				if attempts.Add(1) == 1 {
+					fakeStream.ctx = sCtx
+					return fakeStream, nil
+				}
+				return streamer(sCtx, desc, cc, method, opts...)
+			}
+
+			srv, cc, err := createTestSrv(t, grpc.WithStreamInterceptor(interceptor))
+			if err != nil {
+				t.Fatalf("createTestSrv() failed: %v", err)
+			}
+
+			client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
+			if err != nil {
+				t.Fatalf("NewClient() failed: %v", err)
+			}
+
+			conn, err := NewConnection(ctx, testChannelID, client)
+			if tc.wantErr {
+				if err == nil {
+					conn.Close()
+					t.Fatalf("NewConnection() succeeded, want error")
+				}
+				if tc.wantCode != codes.OK && status.Code(err) != tc.wantCode {
+					t.Errorf("status.Code(err) = %v, want %v (err=%v)", status.Code(err), tc.wantCode, err)
+				}
+				if tc.wantErrIs != nil && !errors.Is(err, tc.wantErrIs) {
+					t.Errorf("NewConnection() err = %v, want %v", err, tc.wantErrIs)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("NewConnection() failed: %v", err)
+				}
+				defer conn.Close()
+
+				srv.reqMx.Lock()
+				reqCount := len(srv.req)
+				var firstReq *acpb.StreamAgentMessagesRequest
+				if reqCount > 0 {
+					firstReq = srv.req[0]
+				}
+				srv.reqMx.Unlock()
+
+				if reqCount != 1 {
+					t.Fatalf("len(srv.req) = %d, want 1", reqCount)
+				}
+				wantReq := &acpb.StreamAgentMessagesRequest{
+					Type: &acpb.StreamAgentMessagesRequest_RegisterConnection{
+						RegisterConnection: &acpb.RegisterConnection{
+							ChannelId:  testChannelID,
+							ResourceId: testResourceID,
+						},
+					},
+				}
+				if diff := cmp.Diff(wantReq, firstReq, protocmp.Transform(), cmpopts.IgnoreUnexported(), protocmp.IgnoreFields(&acpb.StreamAgentMessagesRequest{}, "message_id")); diff != "" {
+					t.Errorf("srv.req[0] diff (-want +got):\n%s", diff)
+				}
+			}
+
+			if got := attempts.Load(); got != tc.wantAttempts {
+				t.Errorf("attempts = %d, want %d", got, tc.wantAttempts)
+			}
+			if fakeStream.recvCalls != tc.wantFakeRecvCalls {
+				t.Errorf("fakeStream.recvCalls = %d, want %d", fakeStream.recvCalls, tc.wantFakeRecvCalls)
+			}
+		})
 	}
 }
