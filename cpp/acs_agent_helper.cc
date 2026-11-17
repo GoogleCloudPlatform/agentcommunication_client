@@ -149,8 +149,8 @@ absl::StatusOr<std::string> CurlHttpGet(const std::string& url,
     return absl::InternalError(absl::StrCat(
         "curl_easy_perform() failed with error: ", curl_easy_strerror(res)));
   }
-  ABSL_VLOG(1) << "Got metadata for key: " << url
-               << " and its value is: " << read_buffer;
+  ABSL_VLOG(1) << "Got metadata for key: " << url << " (" << read_buffer.size()
+               << " bytes)";
   return read_buffer;
 }
 
@@ -165,7 +165,8 @@ absl::StatusOr<AcsToken> ParseAcsToken(absl::string_view endpoint) {
   if (!token.ok()) {
     return token.status();
   }
-  ABSL_VLOG(2) << "Successfully got token from metadata service: " << *token;
+  ABSL_VLOG(2) << "Successfully got token from metadata service ("
+               << token->size() << " bytes)";
   absl::StatusOr<std::string> instance_id = GetValueFromTokenPayloadWithKeys(
       *token, {"google", "compute_engine", "instance_id"});
   if (!instance_id.ok()) {

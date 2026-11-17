@@ -1,6 +1,7 @@
 #include "cpp/jwt.h"
 
 #include <string>
+#include <vector>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -13,7 +14,9 @@
 #define ASSERT_OK(x) ASSERT_TRUE(x.ok());
 #endif
 
+using ::testing::AllOf;
 using ::testing::HasSubstr;
+using ::testing::Not;
 
 namespace agent_communication {
 namespace {
@@ -162,6 +165,49 @@ TEST(JwtTest,
   EXPECT_THAT(audience.status().message(),
               HasSubstr("Failed to decode token: "));
 }
+
+// Error messages must not contain the raw token or any payload claim values,
+// since callers typically log them (b/586645624).
+::testing::Matcher<absl::string_view> ContainsNoCredentialMaterial() {
+  const absl::string_view token_signature =
+      kFullValidToken.substr(kFullValidToken.rfind('.') + 1);
+  return AllOf(Not(HasSubstr(std::string(token_signature))),
+               Not(HasSubstr("109422233875895820585")),
+               Not(HasSubstr("326694433618-compute@developer.gserviceaccount")),
+               Not(HasSubstr("weipengpanda-project")),
+               Not(HasSubstr("2875949485074006138")));
+}
+
+struct ErrorCase {
+  std::string name;
+  std::vector<std::string> keys;
+  std::string want_message;
+};
+
+class JwtErrorMessageTest : public ::testing::TestWithParam<ErrorCase> {};
+
+TEST_P(JwtErrorMessageTest, DoesNotLeakTokenPayload) {
+  absl::StatusOr<std::string> value = GetValueFromTokenPayloadWithKeys(
+      std::string(kFullValidToken), GetParam().keys);
+  ASSERT_FALSE(value.ok());
+  EXPECT_THAT(value.status().message(), HasSubstr(GetParam().want_message));
+  EXPECT_THAT(value.status().message(), ContainsNoCredentialMaterial());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ErrorPaths, JwtErrorMessageTest,
+    ::testing::ValuesIn<ErrorCase>({
+        {"MissingKey", {"invalid_key"}, "does not contain key: invalid_key"},
+        {"InvalidFormat",
+         {"sub", "invalid_key"},
+         "Token has an invalid format:"},
+        {"NonScalarValue",
+         {"google", "compute_engine"},
+         "does not have a string/number value for key"},
+    }),
+    [](const ::testing::TestParamInfo<ErrorCase>& info) {
+      return info.param.name;
+    });
 
 }  // namespace
 }  // namespace agent_communication

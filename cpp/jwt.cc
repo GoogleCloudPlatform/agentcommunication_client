@@ -42,12 +42,13 @@ absl::StatusOr<std::string> GetValueFromTokenPayloadWithKeys(
     jwt::traits::nlohmann_json::json json_obj = decoded->get_payload_json();
     for (const std::string& key : keys) {
       if (!json_obj.is_object()) {
-        return absl::InternalError(
-            absl::StrCat("Token has an invalid format: ", json_obj.dump()));
+        return absl::InternalError(absl::StrCat(
+            "Token has an invalid format: expected an object before key: ",
+            key));
       }
       if (!json_obj.contains(key)) {
-        return absl::InternalError(absl::StrFormat(
-            "Token: %s does not contain key: %s.", json_obj.dump(), key));
+        return absl::InternalError(
+            absl::StrFormat("Token does not contain key: %s.", key));
       }
       json_obj = json_obj[key];
     }
@@ -58,8 +59,8 @@ absl::StatusOr<std::string> GetValueFromTokenPayloadWithKeys(
       return json_obj.get<std::string>();
     }
     return absl::InternalError(absl::StrFormat(
-        "Token %s does not have a string/number value for key (%s): ",
-        json_obj.dump(), absl::StrJoin(keys, ",")));
+        "Token does not have a string/number value for key (%s).",
+        absl::StrJoin(keys, ",")));
   } catch (const std::exception& e) {
     // The try-catch is to catch the exception thrown by the jwt-cpp
     // library. This is probably redundant since we already have the try-catch
@@ -67,8 +68,8 @@ absl::StatusOr<std::string> GetValueFromTokenPayloadWithKeys(
     // throw. We add this outer try-catch to make the code more robust
     // and prevent exception leak into google3.
     return absl::InternalError(absl::StrFormat(
-        "Failed to get value of key (%s) from token %s: due to exception: %s",
-        absl::StrJoin(keys, ","), token, e.what()));
+        "Failed to get value of key (%s) from token due to exception: %s",
+        absl::StrJoin(keys, ","), e.what()));
   }
 }
 
