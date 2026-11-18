@@ -537,12 +537,20 @@ func createStreamLoop(ctx context.Context, client *agentcommunication.Client, re
 			Type: &acpb.StreamAgentMessagesRequest_RegisterConnection{
 				RegisterConnection: &acpb.RegisterConnection{ResourceId: resourceID, ChannelId: channelID}}}
 
-		if err := stream.Send(req); err != nil {
-			return nil, fmt.Errorf("error sending register connection: %v", err)
+		// Send returns io.EOF if the server already ended the stream; Recv below returns the
+		// stream's actual status, which decides whether to retry.
+		sendErr := stream.Send(req)
+		if sendErr != nil && !errors.Is(sendErr, io.EOF) {
+			return nil, fmt.Errorf("error sending register connection: %v", sendErr)
 		}
 
 		// We expect the first message to be a MessageResponse.
 		resp, err := stream.Recv()
+		// If Send returned io.EOF, RegisterConnection was never delivered and the stream has ended.
+		// Skip any messages the server sent before ending it to get the stream's status.
+		for sendErr != nil && err == nil {
+			_, err = stream.Recv()
+		}
 		if err == nil {
 			switch resp.GetType().(type) {
 			case *acpb.StreamAgentMessagesResponse_MessageResponse:

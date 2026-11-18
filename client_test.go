@@ -29,6 +29,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -223,7 +224,7 @@ func (s *testSrv) SendAgentMessage(ctx context.Context, req *acpb.SendAgentMessa
 	return &acpb.SendAgentMessageResponse{MessageBody: body}, nil
 }
 
-func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
+func createTestSrv(t *testing.T, opts ...grpc.DialOption) (*testSrv, *grpc.ClientConn, error) {
 	t.Helper()
 	lis := bufconn.Listen(bufSize)
 	s := grpc.NewServer()
@@ -247,7 +248,8 @@ func createTestSrv(t *testing.T) (*testSrv, *grpc.ClientConn, error) {
 		return lis.Dial()
 	}
 
-	cc, err := grpc.NewClient("passthrough:///bufnet", grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts := append([]grpc.DialOption{grpc.WithContextDialer(bufDialer), grpc.WithTransportCredentials(insecure.NewCredentials())}, opts...)
+	cc, err := grpc.NewClient("passthrough:///bufnet", dialOpts...)
 	if err != nil {
 		return srv, nil, err
 	}
@@ -524,6 +526,121 @@ func TestNewConnection(t *testing.T) {
 	}
 	if conn.MessageRateLimit() != metadataMessageRateLimitValue {
 		t.Errorf("conn.MessageRateLimit() = %v, want %v", conn.MessageRateLimit(), metadataMessageRateLimitValue)
+	}
+}
+
+// endedStream is a client stream the server ended before the client sent RegisterConnection.
+// Per grpc.ClientStream, SendMsg then returns io.EOF, and RecvMsg returns any messages the server
+// sent before ending the stream, then the stream's status.
+type endedStream struct {
+	grpc.ClientStream
+	sendErr  error
+	buffered int // Messages RecvMsg returns before recvErr.
+	recvErr  error
+}
+
+func (s *endedStream) SendMsg(any) error { return s.sendErr }
+func (s *endedStream) RecvMsg(any) error {
+	if s.buffered > 0 {
+		s.buffered--
+		return nil
+	}
+	return s.recvErr
+}
+
+func TestNewConnectionRegisterSendError(t *testing.T) {
+	oldSleep := timeSleep
+	timeSleep = func(time.Duration) {}
+	t.Cleanup(func() { timeSleep = oldSleep })
+
+	tests := []struct {
+		name        string
+		first       *endedStream
+		wantStreams int32
+		wantErr     bool
+	}{
+		{
+			name:        "EOFThenUnavailableRetries",
+			first:       &endedStream{sendErr: io.EOF, recvErr: status.Error(codes.Unavailable, "")},
+			wantStreams: 2,
+		},
+		{
+			name:        "EOFThenResourceExhaustedRetries",
+			first:       &endedStream{sendErr: io.EOF, recvErr: status.Error(codes.ResourceExhausted, "")},
+			wantStreams: 2,
+		},
+		{
+			name:        "EOFWithBufferedMessageThenUnavailableRetries",
+			first:       &endedStream{sendErr: io.EOF, buffered: 1, recvErr: status.Error(codes.Unavailable, "")},
+			wantStreams: 2,
+		},
+		{
+			name:        "EOFWithBufferedMessagesThenUnavailableRetries",
+			first:       &endedStream{sendErr: io.EOF, buffered: 2, recvErr: status.Error(codes.Unavailable, "")},
+			wantStreams: 2,
+		},
+		{
+			name:        "EOFThenRecvEOFFails",
+			first:       &endedStream{sendErr: io.EOF, recvErr: io.EOF},
+			wantStreams: 1,
+			wantErr:     true,
+		},
+		{
+			name:        "EOFThenInternalFails",
+			first:       &endedStream{sendErr: io.EOF, recvErr: status.Error(codes.Internal, "")},
+			wantStreams: 1,
+			wantErr:     true,
+		},
+		{
+			name:        "NonEOFSendErrorFails",
+			first:       &endedStream{sendErr: status.Error(codes.Unavailable, "client-side"), recvErr: status.Error(codes.Unavailable, "")},
+			wantStreams: 1,
+			wantErr:     true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			metadataInitMx.Lock()
+			metadataInited = false
+			metadataInitMx.Unlock()
+
+			var streams atomic.Int32
+			interceptor := func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+				if streams.Add(1) == 1 {
+					return tc.first, nil
+				}
+				return streamer(ctx, desc, cc, method, opts...)
+			}
+
+			ctx := t.Context()
+			srv, cc, err := createTestSrv(t, grpc.WithStreamInterceptor(interceptor))
+			if err != nil {
+				t.Fatalf("createTestSrv() failed: %v", err)
+			}
+			client, err := NewClient(ctx, false, option.WithGRPCConn(cc))
+			if err != nil {
+				t.Fatalf("NewClient() failed: %v", err)
+			}
+
+			conn, err := NewConnection(ctx, testChannelID, client)
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("NewConnection() error = %v, want error: %v", err, tc.wantErr)
+			}
+			if conn != nil {
+				defer conn.Close()
+			}
+			if got := streams.Load(); got != tc.wantStreams {
+				t.Errorf("streams created = %d, want %d", got, tc.wantStreams)
+			}
+			if tc.wantErr {
+				return
+			}
+			srv.reqMx.Lock()
+			defer srv.reqMx.Unlock()
+			if len(srv.req) != 1 {
+				t.Fatalf("srv.req = %v, want 1", len(srv.req))
+			}
+		})
 	}
 }
 
