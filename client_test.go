@@ -107,6 +107,8 @@ type testSrv struct {
 	recvErr       chan error
 	persistentErr error
 	msgStatus     *statuspb.Status
+	// streamDone is closed when the current stream's handler returns. Guarded by reqMx.
+	streamDone chan struct{}
 }
 
 func newTestSrv(*grpc.Server) *testSrv {
@@ -118,6 +120,12 @@ func newTestSrv(*grpc.Server) *testSrv {
 func (s *testSrv) StreamAgentMessages(stream acpb.AgentCommunication_StreamAgentMessagesServer) error {
 	s.Lock()
 	defer s.Unlock()
+	// Deferred before close(closed), so it runs after the recv goroutine stops recording requests.
+	done := make(chan struct{})
+	defer close(done)
+	s.reqMx.Lock()
+	s.streamDone = done
+	s.reqMx.Unlock()
 	s.send = make(chan *acpb.StreamAgentMessagesResponse)
 	closed := make(chan struct{})
 	defer close(closed)
@@ -804,7 +812,13 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 			srv.send <- &acpb.StreamAgentMessagesResponse{Type: &acpb.StreamAgentMessagesResponse_MessageBody{}}
 			waitForRequests(t, srv, 2)
 			// Close the connection server side, client should not autoreconnect because it is blocked on recv.
+			srv.reqMx.Lock()
+			streamDone := srv.streamDone
+			srv.reqMx.Unlock()
 			srv.recvErr <- tc.err
+			// recvErr is buffered, so wait for the server handler to return. Otherwise the message
+			// below can still reach the old stream.
+			<-streamDone
 
 			// Should wait for reconnect.
 			msg := &acpb.MessageBody{Labels: map[string]string{"key": "value"}, Body: &apb.Any{Value: []byte("test-body")}}
@@ -843,7 +857,7 @@ func TestSendMessage_ClosedConnection(t *testing.T) {
 					return
 				}
 			case <-timer.C:
-				t.Errorf("SendMessage() timed out")
+				t.Fatalf("SendMessage() timed out")
 			}
 
 			// Should have 2 more messages now, register and the send.
