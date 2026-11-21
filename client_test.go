@@ -30,7 +30,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -275,10 +274,6 @@ func createTestSrvVSOCK(t *testing.T) (*testSrv, error) {
 	})
 
 	lis, err := vsock.ListenContextID(vsock.Local, vsockPort, nil)
-	if errors.Is(err, syscall.EADDRNOTAVAIL) {
-		// The kernel has no vsock loopback transport (vsock_loopback), e.g. GitHub Actions runners.
-		t.Skipf("vsock loopback not available: %v", err)
-	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial vsock: %w", err)
 	}
